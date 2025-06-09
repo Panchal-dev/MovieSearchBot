@@ -15,6 +15,7 @@ from telegram.ext import (
     ConversationHandler,
 )
 from telegram.error import Conflict, NetworkError, TimedOut
+from tornado.web import Application as TornadoApp, RequestHandler
 
 # Set up logging
 logging.basicConfig(
@@ -401,6 +402,12 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         logger.warning("No message available to reply to in error handler.")
 
+# Health check handler for Railway
+class HealthCheckHandler(RequestHandler):
+    def get(self):
+        self.write("OK")
+        self.set_status(200)
+
 def main():
     # Load Telegram bot token and webhook URL from environment variables
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -412,6 +419,11 @@ def main():
     if not webhook_url:
         logger.error("WEBHOOK_URL environment variable not set.")
         return
+
+    # Ensure webhook_url ends with /webhook
+    if not webhook_url.endswith("/webhook"):
+        webhook_url = f"{webhook_url.rstrip('/')}/webhook"
+        logger.info(f"Corrected webhook URL to: {webhook_url}")
 
     # Initialize Telegram bot with webhook
     try:
@@ -450,13 +462,20 @@ def main():
         application.add_handler(update_url_handler)
         application.add_error_handler(error_handler)
 
+        # Set up Tornado application for health check
+        port = int(os.getenv("PORT", 8443))
+        tornado_app = TornadoApp([
+            (r"/health", HealthCheckHandler),
+        ])
+
         # Set webhook
         logger.info(f"Setting webhook: {webhook_url}")
         application.run_webhook(
             listen="0.0.0.0",
-            port=int(os.getenv("PORT", 8443)),
+            port=port,
             webhook_url=webhook_url,
-            drop_pending_updates=True
+            drop_pending_updates=True,
+            url_path="/webhook"
         )
     except (Conflict, NetworkError, TimedOut) as e:
         logger.error(f"Webhook setup error: {e}")
