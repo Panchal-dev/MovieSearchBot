@@ -4,7 +4,6 @@ import cloudscraper
 import requests
 from bs4 import BeautifulSoup
 import time
-import logging
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -14,15 +13,6 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
 )
-from telegram.request import HTTPXRequest
-from telegram.error import Conflict, TimedOut
-
-# Set up logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
 
 # Constants
 ALLOWED_IDS = {5809601894, 1285451259}
@@ -54,7 +44,7 @@ def save_config(config):
 
 # Check if user is authorized
 def is_authorized(update: Update):
-    return update.effective_user.id in ALLOWED_IDS if update.effective_user else False
+    return update.effective_user.id in ALLOWED_IDS
 
 # Scrape movie titles and links from a site
 def get_movie_titles_and_links(movie_name, site_name, site_url):
@@ -91,7 +81,6 @@ def get_movie_titles_and_links(movie_name, site_name, site_url):
                 page += 1
                 time.sleep(3)
             except Exception as e:
-                logger.error(f"Error scraping {site_name} page {page}: {e}")
                 break
 
     elif site_name == "hdhub4u":
@@ -127,7 +116,6 @@ def get_movie_titles_and_links(movie_name, site_name, site_url):
                 page += 1
                 time.sleep(3)
             except Exception as e:
-                logger.error(f"Error scraping {site_name} page {page}: {e}")
                 break
 
     elif site_name == "cinevood":
@@ -156,7 +144,6 @@ def get_movie_titles_and_links(movie_name, site_name, site_url):
                 page += 1
                 time.sleep(3)
             except Exception as e:
-                logger.error(f"Error scraping {site_name} page {page}: {e}")
                 break
 
     return all_titles, movie_links
@@ -182,8 +169,7 @@ def get_download_links(movie_url, site_name):
                     link_url = tag['href']
                     if link_text and link_url and not any(exclude in link_text.lower() for exclude in ['watch online', 'trailer']):
                         download_links.append(f"{link_text}: {link_url}")
-        except Exception as e:
-            logger.error(f"Error fetching download links for {site_name}: {e}")
+        except Exception:
             pass
 
     elif site_name == "hdhub4u":
@@ -202,8 +188,7 @@ def get_download_links(movie_url, site_name):
                 link_url = tag['href']
                 if link_text and link_url and not any(exclude in link_text.lower() for exclude in ['watch online', 'trailer']):
                     download_links.append(f"{link_text}: {link_url}")
-        except Exception as e:
-            logger.error(f"Error fetching download links for {site_name}: {e}")
+        except Exception:
             pass
 
     elif site_name == "cinevood":
@@ -224,8 +209,7 @@ def get_download_links(movie_url, site_name):
                         link_text = link_tag.find('button').text.strip()
                         link_url = link_tag['href']
                         download_links.append(f"{description} [{link_text}]: {link_url}")
-        except Exception as e:
-            logger.error(f"Error fetching download links for {site_name}: {e}")
+        except Exception:
             pass
 
     return download_links
@@ -233,7 +217,7 @@ def get_download_links(movie_url, site_name):
 # Telegram bot handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
-        await update.message.reply_text("🚫 Unauthorized access. This bot is restricted.")
+        await update.message.reply_text("Unauthorized access. This bot is restricted.")
         return ConversationHandler.END
     await update.message.reply_text(
         "🎬 Welcome to the Movie Search Bot! 🎥\n"
@@ -246,18 +230,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
-        await update.message.reply_text("🚫 Unauthorized access. This bot is restricted.")
+        await update.message.reply_text("Unauthorized access. This bot is restricted.")
         return ConversationHandler.END
     await update.message.reply_text("🎥 Please enter the movie name to search:")
     return SEARCH
 
 async def receive_movie_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
-        await update.message.reply_text("🚫 Unauthorized access. This bot is restricted.")
+        await update.message.reply_text("Unauthorized access. This bot is restricted.")
         return ConversationHandler.END
     movie_name = update.message.text.strip()
     if not movie_name:
-        await update.message.reply_text("❌ Please enter a valid movie name.")
+        await update.message.reply_text("Please enter a valid movie name.")
         return SEARCH
     context.user_data['movie_name'] = movie_name
     config = load_config()
@@ -277,7 +261,7 @@ async def receive_movie_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['movie_links'] = all_links
     if not all_titles:
         await update.message.reply_text(
-            "😔 No movies found. Possible reasons:\n"
+            "No movies found. Possible reasons:\n"
             "- Check your movie name.\n"
             "- Websites may have blocked the request (try a VPN).\n"
             "- Site structure may have changed.\n"
@@ -292,13 +276,13 @@ async def receive_movie_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def select_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
-        await update.message.reply_text("🚫 Unauthorized access. This bot is restricted.")
+        await update.message.reply_text("Unauthorized access. This bot is restricted.")
         return ConversationHandler.END
     try:
         selection = int(update.message.text.strip())
         movie_links = context.user_data.get('movie_links', [])
         if selection < 1 or selection > len(movie_links):
-            await update.message.reply_text(f"❌ Please enter a number between 1 and {len(movie_links)}.")
+            await update.message.reply_text(f"Please enter a number between 1 and {len(movie_links)}.")
             return SELECT_MOVIE
         site_name, movie_url = movie_links[selection - 1]
         download_links = get_download_links(movie_url, site_name)
@@ -308,16 +292,16 @@ async def select_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await update.message.reply_text(
-                "😔 No download links found for the selected movie.\nSearch again with /search or use /cancel."
+                "No download links found for the selected movie.\nSearch again with /search or use /cancel."
             )
         return ConversationHandler.END
     except ValueError:
-        await update.message.reply_text("❌ Please enter a valid number.")
+        await update.message.reply_text("Please enter a valid number.")
         return SELECT_MOVIE
 
 async def list_urls(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
-        await update.message.reply_text("🚫 Unauthorized access. This bot is restricted.")
+        await update.message.reply_text("Unauthorized access. This bot is restricted.")
         return
     config = load_config()
     urls = [f"{i+1}. {site_name}: {site_info['url']} (Enabled: {site_info['enabled']})"
@@ -326,7 +310,7 @@ async def list_urls(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def update_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
-        await update.message.reply_text("🚫 Unauthorized access. This bot is restricted.")
+        await update.message.reply_text("Unauthorized access. This bot is restricted.")
         return ConversationHandler.END
     config = load_config()
     sites = list(config['sites'].keys())
@@ -339,13 +323,13 @@ async def update_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_url_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
-        await update.message.reply_text("🚫 Unauthorized access. This bot is restricted.")
+        await update.message.reply_text("Unauthorized access. This bot is restricted.")
         return ConversationHandler.END
     try:
         selection = int(update.message.text.strip())
         sites = context.user_data.get('sites', [])
         if selection < 1 or selection > len(sites):
-            await update.message.reply_text(f"❌ Please enter a number between 1 and {len(sites)}.")
+            await update.message.reply_text(f"Please enter a number between 1 and {len(sites)}.")
             return UPDATE_URL
         context.user_data['selected_site'] = sites[selection - 1]
         await update.message.reply_text(
@@ -353,16 +337,16 @@ async def receive_url_selection(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return UPDATE_URL
     except ValueError:
-        await update.message.reply_text("❌ Please enter a valid number.")
+        await update.message.reply_text("Please enter a valid number.")
         return UPDATE_URL
 
 async def receive_new_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
-        await update.message.reply_text("🚫 Unauthorized access. This bot is restricted.")
+        await update.message.reply_text("Unauthorized access. This bot is restricted.")
         return ConversationHandler.END
     new_url = update.message.text.strip()
     if not new_url.startswith("https://"):
-        await update.message.reply_text("❌ Please enter a valid URL starting with 'https://'.")
+        await update.message.reply_text("Please enter a valid URL starting with 'https://'.")
         return UPDATE_URL
     config = load_config()
     selected_site = context.user_data.get('selected_site')
@@ -375,89 +359,56 @@ async def receive_new_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
-        await update.message.reply_text("🚫 Unauthorized access. This bot is restricted.")
+        await update.message.reply_text("Unauthorized access. This bot is restricted.")
         return ConversationHandler.END
-    await update.message.reply_text("✅ Operation cancelled. Use /search to start a new search or /list_urls to view URLs.")
+    await update.message.reply_text("Operation cancelled. Use /search to start a new search or /list_urls to view URLs.")
     return ConversationHandler.END
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Update {update} caused error {context.error}")
-    if update and update.message:
-        await update.message.reply_text("⚠️ An error occurred. Please try again with /search or /list_urls.")
-    else:
-        logger.warning("No message available to reply to in error handler.")
+    await update.message.reply_text("An error occurred. Please try again with /search or /list_urls.")
 
 def main():
     # Load Telegram bot token from environment variable
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not bot_token:
-        logger.error("TELEGRAM_BOT_TOKEN environment variable not set.")
+        print("Error: TELEGRAM_BOT_TOKEN environment variable not set.")
         return
 
-    # Initialize Telegram bot with retry mechanism
-    max_retries = 3
-    retry_delay = 5  # seconds
-    for attempt in range(max_retries):
-        try:
-            # Configure request with timeout
-            request = HTTPXRequest(connection_timeout=20, read_timeout=20)
-            application = (
-                Application.builder()
-                .token(bot_token)
-                .request(request)
-                .build()
-            )
+    # Initialize Telegram bot
+    application = Application.builder().token(bot_token).build()
 
-            # Conversation handler for search
-            conv_handler = ConversationHandler(
-                entry_points=[CommandHandler('search', search)],
-                states={
-                    SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_movie_name)],
-                    SELECT_MOVIE: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_movie)],
-                },
-                fallbacks=[CommandHandler('cancel', cancel)],
-            )
+    # Conversation handler for search
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('search', search)],
+        states={
+            SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_movie_name)],
+            SELECT_MOVIE: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_movie)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
 
-            # Conversation handler for updating URLs
-            update_url_handler = ConversationHandler(
-                entry_points=[CommandHandler('update_url', update_url)],
-                states={
-                    UPDATE_URL: [
-                        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_url_selection),
-                        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_url),
-                    ],
-                },
-                fallbacks=[CommandHandler('cancel', cancel)],
-            )
+    # Conversation handler for updating URLs
+    update_url_handler = ConversationHandler(
+        entry_points=[CommandHandler('update_url', update_url)],
+        states={
+            UPDATE_URL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_url_selection),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_url),
+            ],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
 
-            # Add handlers
-            application.add_handler(CommandHandler('start', start))
-            application.add_handler(conv_handler)
-            application.add_handler(CommandHandler('list_urls', list_urls))
-            application.add_handler(update_url_handler)
-            application.add_error_handler(error_handler)
+    # Add handlers
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler('list_urls', list_urls))
+    application.add_handler(update_url_handler)
+    application.add_error_handler(error_handler)
 
-            # Start the bot
-            logger.info("Starting Telegram bot...")
-            application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-            break  # Exit retry loop on success
-        except Conflict as e:
-            logger.error(f"Conflict error on attempt {attempt + 1}: {e}")
-            if attempt < max_retries - 1:
-                logger.info(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-            else:
-                logger.error("Max retries reached. Failed to start bot.")
-        except TimedOut as e:
-            logger.error(f"Timeout error on attempt {attempt + 1}: {e}")
-            if attempt < max_retries - 1:
-                logger.info(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-            else:
-                logger.error("Max retries reached. Failed to start bot.")
-        except Exception as e:
-            logger.error(f"Unexpected error on attempt {attempt + 1}: {e}")
-            break
+    # Start the bot
+    print("Starting Telegram bot...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
