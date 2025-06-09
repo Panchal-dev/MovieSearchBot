@@ -1,6 +1,5 @@
-python-telegram-bot==20.7
+python-telegram-bot[webhooks]==20.7
 cloudscraper==1.2.71
 requests==2.32.3
 beautifulsoup4==4.12.3
 pyTelegramBotAPI
-python-telegram-bot[webhooks]
