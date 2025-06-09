@@ -19,10 +19,10 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 # Store user state with expiration
 user_state = {}  # {chat_id: {'step': str, 'movie_name': str, 'site_results': {site: {'titles': [], 'links': []}}, 'last_active': datetime}}
 STATE_TIMEOUT = timedelta(minutes=30)  # Expire state after 30 minutes
-MAX_MESSAGE_LENGTH = 40000  # Telegram message limit
+MAX_MESSAGE_LENGTH = 4000  # Telegram message limit
 MAX_RETRIES = 3  # Retry attempts for requests
-MAX_RESULTS_PER_SITE = 1000  # Limit results per site
-BUTTON_TEXT_LIMIT = 60000  # Telegram button text limit
+MAX_RESULTS_PER_SITE = 100  # Limit results per site
+BUTTON_TEXT_LIMIT = 600  # Telegram button text limit
 
 def cleanup_expired_states():
     """Remove expired user states."""
@@ -352,17 +352,15 @@ def telegram_webhook():
                 logger.info(f"User {chat_id} selected movie '{selected_title}' from {site}")
                 download_links = get_download_links_for_movie(selected_link, site)
 
-                del user_state[chat_id]  # Clear state after completion
-
                 if download_links:
                     links_text = "\n".join([f"• {link}" for link in download_links])
                     send_long_message(
                         chat_id,
                         f"✅ <b>Download Links for '{selected_title}':</b>\n\n{links_text}\n\n"
-                        f"Start a new search with /start.",
+                        f"Select another movie from the previous results or start a new search with /start.",
                         reply_to_message_id=message_id
                     )
-                    logger.info(f"User {chat_id} received {len(download_links)} download links")
+                    logger.info(f"User {chat_id} received {len(download_links)} download links for '{selected_title}'")
                 else:
                     send_long_message(
                         chat_id,
@@ -370,12 +368,13 @@ def telegram_webhook():
                         f"Possible reasons:\n"
                         "• Links not available on {site}.\n"
                         "• Site structure may have changed.\n\n"
-                        "Try another movie with /start.",
+                        f"Select another movie from the previous results or start a new search with /start.",
                         reply_to_message_id=message_id
                     )
                     logger.info(f"No download links found for '{selected_title}' by user {chat_id}")
 
                 bot.answer_callback_query(callback['id'])
+                logger.info(f"User {chat_id} state preserved for further selections")
 
         return '', 200
 
