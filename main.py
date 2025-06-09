@@ -14,6 +14,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
 )
+from telegram.request import HTTPXRequest
 from telegram.error import Conflict, TimedOut
 
 # Set up logging
@@ -398,10 +399,12 @@ def main():
     retry_delay = 5  # seconds
     for attempt in range(max_retries):
         try:
+            # Configure request with timeout
+            request = HTTPXRequest(connection_timeout=20, read_timeout=20)
             application = (
                 Application.builder()
                 .token(bot_token)
-                .get_updates_request_timeout(20)  # Increase timeout
+                .request(request)
                 .build()
             )
 
