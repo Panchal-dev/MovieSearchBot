@@ -88,6 +88,7 @@ def create_movie_selection_keyboard(site, titles, offset=0):
             callback_data=f"select_{site}_{i}"
         ))
     
+    # Navigation buttons
     nav_buttons = []
     if offset > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"prev_{site}_{max(0, offset-MAX_RESULTS_PER_SITE)}"))
@@ -97,6 +98,7 @@ def create_movie_selection_keyboard(site, titles, offset=0):
     if nav_buttons:
         markup.row(*nav_buttons)
     
+    # Control buttons
     markup.row(
         InlineKeyboardButton("🔙 Back to Sites", callback_data="back_to_sites"),
         InlineKeyboardButton("🔍 New Search", callback_data="new_search")
@@ -203,35 +205,54 @@ def telegram_webhook():
             # Handle commands
             if text.lower() == '/start':
                 user_state[chat_id] = {'step': 'awaiting_movie_name', 'last_active': datetime.now()}
-                
-                # Fetch latest movies for welcome message
-                latest_results = get_latest_movies_all_sites()
-                latest_text = "🔥 <b>Latest Releases:</b>\n\n"
-                for site, data in latest_results.items():
-                    site_info = SITES.get(site, {'name': site.capitalize(), 'emoji': '🎬'})
-                    titles = data['titles'][:5]  # Show top 5 latest movies per site
-                    if titles:
-                        latest_text += f"🎬 <b>{site_info['emoji']} {site_info['name']}:</b>\n"
-                        for i, title in enumerate(titles, 1):
-                            latest_text += f"  {i}. {title}\n"
+                latest_movies = get_latest_movies_all_sites()
+                latest_text = ""
+                if latest_movies:
+                    latest_text = "🔥 <b>Latest Releases:</b>\n\n"
+                    for site, data in latest_movies.items():
+                        site_info = SITES.get(site, {'name': site.capitalize(), 'emoji': '🎬'})
+                        latest_text += f"{site_info['emoji']} <b>{site_info['name']}:</b>\n"
+                        for i, title in enumerate(data['titles'][:5], 1):
+                            latest_text += f"• {title}\n"
                         latest_text += "\n"
                 
-                if not latest_results:
-                    latest_text = "😔 <b>No latest releases found at the moment.</b>\n\n"
-
                 welcome_text = (
                     "🎬 <b>Welcome to Advanced Movie Search Bot!</b>\n\n"
-                    f"{latest_text}"
                     "✨ <b>How it works:</b>\n"
                     "1️⃣ Enter movie name\n"
                     "2️⃣ Choose your preferred site\n"
                     "3️⃣ Select movie from results\n"
                     "4️⃣ Get download links instantly!\n\n"
-                    "🔍 <b>Enter a movie name or select Latest Movies:</b>\n"
+                    f"{latest_text}"
+                    "🔍 <b>Enter a movie name to get started:</b>\n"
                     "💡 <i>Example: Avengers Endgame 2019</i>"
                 )
-                send_long_message(chat_id, welcome_text, reply_to_message_id=message_id, reply_markup=create_site_selection_keyboard())
+                send_long_message(chat_id, welcome_text, reply_to_message_id=message_id)
                 logger.info(f"User {chat_id} started bot")
+
+            elif text.lower() == '/cmd':
+                commands_text = (
+                    "📋 <b>Available Commands:</b>\n\n"
+                    "1️⃣ <b>/start</b>\n"
+                    "   Start the bot and see latest releases\n"
+                    "   <i>Example: /start</i>\n\n"
+                    "2️⃣ <b>/cancel</b>\n"
+                    "   Cancel current operation\n"
+                    "   <i>Example: /cancel</i>\n\n"
+                    "3️⃣ <b>/update_domain</b>\n"
+                    "   Update website domains\n"
+                    "   <i>Example: /update_domain, then enter site number and new domain</i>\n\n"
+                    "4️⃣ <b>/cmd</b>\n"
+                    "   Show this command list\n"
+                    "   <i>Example: /cmd</i>\n\n"
+                    "💡 <b>Usage Tips:</b>\n"
+                    "• Use /start to begin a new search\n"
+                    "• Select 'Latest Movies' to browse recent releases\n"
+                    "• Use inline buttons to navigate\n"
+                    "• Links are clickable to open directly"
+                )
+                send_long_message(chat_id, commands_text, reply_to_message_id=message_id)
+                logger.info(f"User {chat_id} requested command list")
 
             elif text.lower() == '/cancel':
                 if chat_id in user_state:
@@ -380,7 +401,7 @@ def telegram_webhook():
                 return '', 200
 
             elif callback_data == 'back_to_sites':
-                if 'movie_name' in state or state.get('step') == 'latest_selection':
+                if 'movie_name' in state or state['step'] == 'latest_selection':
                     user_state[chat_id]['step'] = 'site_selection'
                     site_selection_text = (
                         f"🎯 <b>Searching for: '{state.get('movie_name', 'Latest Movies')}'</b>\n\n"
@@ -392,37 +413,38 @@ def telegram_webhook():
                         message_id=message_id,
                         text=site_selection_text,
                         parse_mode='HTML',
-                        reply_markup=create_site_selection_keyboard(show_latest=(state.get('step') != 'latest_selection'))
+                        reply_markup=create_site_selection_keyboard(show_latest=state.get('step') != 'latest_selection')
                     )
                     bot.answer_callback_query(callback['id'])
                 return '', 200
 
             elif callback_data.startswith('site_'):
                 site = callback_data.replace('site_', '')
-                movie_name = state.get('movie_name', '')
                 site_info = SITES.get(site, {'name': site.capitalize(), 'emoji': '🎬'})
                 
                 # Show loading message
                 bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text=f"🔍 <b>Searching '{movie_name or 'Latest Movies'}' on {site_info['emoji']} {site_info['name']}...</b>\n\n⏳ <i>Please wait...</i>",
+                    text=f"🔍 <b>Searching '{state.get('movie_name', 'Latest Movies')}' on {site_info['emoji']} {site_info['name']}...</b>\n\n⏳ <i>Please wait...</i>",
                     parse_mode='HTML'
                 )
 
-                # Search movies or get latest
-                if state.get('step') == 'latest_selection':
+                if state['step'] == 'latest_selection':
                     titles = state['site_results'].get(site, {}).get('titles', [])
                     links = state['site_results'].get(site, {}).get('links', [])
                 else:
-                    titles, links = search_movies_single_site(movie_name, site)
+                    if 'movie_name' not in state:
+                        bot.answer_callback_query(callback['id'], text="❌ No movie name found!", show_alert=True)
+                        return '', 200
+                    titles, links = search_movies_single_site(state['movie_name'], site)
                 
                 if not titles:
                     bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=message_id,
                         text=(
-                            f"😔 <b>No results found for '{movie_name or 'Latest Movies'}'</b>\n\n"
+                            f"😔 <b>No results found for '{state.get('movie_name', 'Latest Movies')}'</b>\n\n"
                             f"🎬 Site: {site_info['emoji']} {site_info['name']}\n\n"
                             f"💡 <b>Try:</b>\n"
                             f"• Different spelling\n"
@@ -436,15 +458,14 @@ def telegram_webhook():
                     return '', 200
 
                 # Store results
-                if state.get('step') != 'latest_selection':
-                    user_state[chat_id].update({
-                        'step': 'movie_selection',
-                        'current_site': site,
-                        'site_results': {site: {'titles': titles, 'links': links}}
-                    })
+                user_state[chat_id].update({
+                    'step': 'movie_selection',
+                    'current_site': site,
+                    'site_results': {site: {'titles': titles, 'links': links}}
+                })
 
                 results_text = (
-                    f"✨ <b>Found {len(titles)} results for '{movie_name or 'Latest Movies'}'</b>\n\n"
+                    f"✨ <b>Found {len(titles)} results for '{state.get('movie_name', 'Latest Movies')}'</b>\n\n"
                     f"🎬 <b>Site:</b> {site_info['emoji']} {site_info['name']}\n\n"
                     f"📱 <b>Select a movie to get download links:</b>"
                 )
@@ -520,8 +541,8 @@ def telegram_webhook():
 
                 if download_links:
                     links_text = ""
-                    for i, link in enumerate(download_links[:10], 1):  # Limit to 10 links
-                        title, url = link if isinstance(link, tuple) else ("Link", link)
+                    for i, link in enumerate(download_links[:10], 1):
+                        title, url = link if isinstance(link, tuple) else (f"Link {i}", link)
                         links_text += f"{i}) <b>{title}</b>\n<a href='{url}'>{url}</a>\n\n"
                     
                     final_text = (
@@ -530,6 +551,7 @@ def telegram_webhook():
                         f"🌐 <b>Site:</b> {site_info['emoji']} {site_info['name']}\n"
                         f"📊 <b>Found:</b> {len(download_links)} links\n\n"
                         f"📥 <b>Download Links:</b>\n\n{links_text}"
+                        f"💡 <i>Click links to open</i>"
                     )
                     
                     bot.edit_message_text(
@@ -586,11 +608,7 @@ def telegram_webhook():
                 bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text=(
-                        f"🔥 <b>Latest Movies</b>\n\n"
-                        f"🎬 <b>Choose a site to view latest releases:</b>\n\n"
-                        f"📍 <i>Each site may have different new releases</i>"
-                    ),
+                    text="🔥 <b>Latest Movies</b>\n\n🎬 <b>Choose a site to view latest releases:</b>",
                     parse_mode='HTML',
                     reply_markup=create_site_selection_keyboard(show_latest=False)
                 )
