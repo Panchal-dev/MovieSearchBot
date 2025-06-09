@@ -19,10 +19,10 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 # Store user state with expiration
 user_state = {}  # {chat_id: {'step': str, 'movie_name': str, 'site_results': {site: {'titles': [], 'links': []}}, 'last_active': datetime}}
 STATE_TIMEOUT = timedelta(minutes=30)  # Expire state after 30 minutes
-MAX_MESSAGE_LENGTH = 400000  # Telegram message limit
+MAX_MESSAGE_LENGTH = 40000  # Telegram message limit
 MAX_RETRIES = 3  # Retry attempts for requests
-MAX_RESULTS_PER_SITE = 10000  # Limit results per site
-BUTTON_TEXT_LIMIT = 60000  # Telegram button text limit
+MAX_RESULTS_PER_SITE = 1000  # Limit results per site
+BUTTON_TEXT_LIMIT = 6000  # Telegram button text limit
 
 def cleanup_expired_states():
     """Remove expired user states."""
@@ -255,13 +255,11 @@ def telegram_webhook():
                     site_key = state['site_key']
                     if update_site_domain(site_key, new_domain):
                         del user_state[chat_id]
-                        sites = "\n".join([f"• {i+1}. {key}: {SITE_CONFIG[key]}" for i, key in enumerate(SITE_CONFIG.keys())])
                         send_long_message(
                             chat_id,
                             f"✅ <b>Updated {site_key} to '{new_domain}'</b>\n\n"
                             f"The bot will now use the new domain for searches.\n"
-                            f"Start a new operation with /start.\n\n"
-                            f"📚 <b>Current Site Domains:</b>\n{sites}",
+                            f"Start a new operation with /start.",
                             reply_to_message_id=message_id
                         )
                         logger.info(f"User {chat_id} updated {site_key} to {new_domain}")
@@ -340,7 +338,7 @@ def telegram_webhook():
                     if site not in state['site_results'] or index >= len(state['site_results'][site]['links']):
                         raise ValueError("Invalid selection")
                 except ValueError:
-                    bot.answer_callback_query(callback['id'], text="Invalid selection!", show_alert=True)
+                    bot.answer_callback_query(callback['id'], text="❌ Invalid selection!", show_alert=True)
                     logger.warning(f"User {chat_id} sent invalid callback: {callback_data}")
                     return '', 200
 
@@ -434,7 +432,7 @@ def cleanup():
 state_cleanup_thread = threading.Thread(target=cleanup_expired_states, daemon=True)
 state_cleanup_thread.start()
 
-# Start keep_alive thread
+# Start keep-alive thread
 keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
 keep_alive_thread.start()
 
