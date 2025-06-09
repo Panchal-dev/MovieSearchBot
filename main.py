@@ -22,7 +22,7 @@ STATE_TIMEOUT = timedelta(minutes=30)  # Expire state after 30 minutes
 MAX_MESSAGE_LENGTH = 40000  # Telegram message limit
 MAX_RETRIES = 3  # Retry attempts for requests
 MAX_RESULTS_PER_SITE = 1000  # Limit results per site
-BUTTON_TEXT_LIMIT = 6000  # Telegram button text limit
+BUTTON_TEXT_LIMIT = 60000  # Telegram button text limit
 
 def cleanup_expired_states():
     """Remove expired user states."""
