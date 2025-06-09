@@ -36,9 +36,9 @@ CONFIG_FILE = 'site_config.json'
 def validate_domain(domain, site_key):
     """Validate the domain format for the given site."""
     # Basic domain regex (allows subdomains, common TLDs)
-    domain_pattern = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$')
+    domain_pattern = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$', re.IGNORECASE)
     if not domain_pattern.match(domain):
-        logger.warning(f"Invalid domain format: {domain}")
+        logger.warning(f"Invalid domain format for {site_key}: {domain}")
         return False
 
     # Site-specific validation
@@ -47,11 +47,12 @@ def validate_domain(domain, site_key):
         'hdhub4u': ['hdhub4u'],
         'cinevood': ['cinevood', '1cinevood']
     }
-    prefix = domain.split('.')[0]
-    if prefix not in expected_prefixes[site_key]:
-        logger.warning(f"Domain {domain} does not match expected prefix for {site_key}")
+    prefix = domain.split('.')[0].lower()
+    if prefix not in [p.lower() for p in expected_prefixes[site_key]]:
+        logger.warning(f"Domain {domain} prefix '{prefix}' does not match expected prefixes {expected_prefixes[site_key]} for {site_key}")
         return False
 
+    logger.debug(f"Domain {domain} validated successfully for {site_key}")
     return True
 
 def load_site_config():
@@ -66,6 +67,8 @@ def load_site_config():
                     if key in loaded_config and validate_domain(loaded_config[key], key):
                         SITE_CONFIG[key] = loaded_config[key]
                 logger.info("Loaded site config from file")
+        else:
+            logger.info("No site_config.json found, using default SITE_CONFIG")
     except Exception as e:
         logger.error(f"Error loading site config: {e}")
         save_site_config()  # Save default config if loading fails

@@ -19,7 +19,7 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 # Store user state with expiration
 user_state = {}  # {chat_id: {'step': str, 'movie_name': str, 'site_results': {site: {'titles': [], 'links': []}}, 'last_active': datetime}}
 STATE_TIMEOUT = timedelta(minutes=30)  # Expire state after 30 minutes
-MAX_MESSAGE_LENGTH = 40000  # Telegram message limit
+MAX_MESSAGE_LENGTH = 4000  # Telegram message limit
 MAX_RETRIES = 3  # Retry attempts for requests
 MAX_RESULTS_PER_SITE = 1000  # Limit results per site
 BUTTON_TEXT_LIMIT = 6000  # Telegram button text limit
@@ -83,8 +83,6 @@ def search_movies(movie_name):
                 if titles:
                     site_results[site] = {'titles': titles, 'links': [(link, site) for link in links]}
                     logger.info(f"Fetched {len(titles)} titles from {site}")
-                else:
-                    logger.info(f"No titles found on {site}")
             except Exception as e:
                 logger.error(f"Error searching {site}: {e}")
 
@@ -100,7 +98,7 @@ def get_download_links_for_movie(link, site):
     for attempt in range(MAX_RETRIES):
         try:
             links = site_functions[site](link)
-            logger.info(f"Fetched {len(links)} download links from {site}")
+            logger.debug(f"Fetched {len(links)} download links from {site}")
             return links
         except Exception as e:
             logger.warning(f"Attempt {attempt + 1} failed for {site}: {e}")
@@ -255,11 +253,13 @@ def telegram_webhook():
                     site_key = state['site_key']
                     if update_site_domain(site_key, new_domain):
                         del user_state[chat_id]
+                        sites = "\n".join([f"• {i+1}. {key}: {SITE_CONFIG[key]}" for i, key in enumerate(SITE_CONFIG.keys())])
                         send_long_message(
                             chat_id,
                             f"✅ <b>Updated {site_key} to '{new_domain}'</b>\n\n"
                             f"The bot will now use the new domain for searches.\n"
-                            f"Start a new operation with /start.",
+                            f"Start a new operation with /start.\n\n"
+                            f"📚 <b>Current Domains:</b>\n{sites}",
                             reply_to_message_id=message_id
                         )
                         logger.info(f"User {chat_id} updated {site_key} to {new_domain}")
@@ -267,10 +267,12 @@ def telegram_webhook():
                         del user_state[chat_id]
                         send_long_message(
                             chat_id,
-                            f"❌ <b>Failed to Update Domain</b>\n\nInvalid site key. Operation cancelled.\n\nStart over with /start.",
+                            f"❌ <b>Failed to Update Domain</b>\n\n"
+                            f"Invalid domain format or prefix for site '{site_key}'. Please check the domain (e.g., 'hdmovie2.site').\n\n"
+                            f"Start over with /start.",
                             reply_to_message_id=message_id
                         )
-                        logger.warning(f"User {chat_id} failed to update domain for {site_key}")
+                        logger.info(f"User {chat_id} failed to update domain for {site_key} to {new_domain}")
 
         elif 'callback_query' in update:
             callback = update['callback_query']
@@ -279,8 +281,8 @@ def telegram_webhook():
             callback_data = callback['data']
 
             if chat_id not in ALLOWED_IDS:
-                bot.answer_callback_query(callback['id'], text="🚫 Unauthorized access!", show_alert=True)
-                logger.info(f"Unauthorized callback by chat_id {chat_id}")
+                bot.answer_callback_query(callback['id'], text="❌ <code>Unauthorized Access</code>", show_alert=True)
+                logger.info(f"Unauthorized callback by {chat_id}")
                 return '', 200
 
             if chat_id not in user_state or user_state[chat_id]['step'] != 'awaiting_selection':
@@ -295,15 +297,15 @@ def telegram_webhook():
             if callback_data == 'cancel':
                 del user_state[chat_id]
                 send_long_message(chat_id, "✅ <b>Operation Cancelled</b>\n\nStart over with /start.", reply_to_message_id=message_id)
-                bot.answer_callback_query(callback['id'])
                 logger.info(f"User {chat_id} cancelled via callback")
+                bot.answer_callback_query(callback['id'])
                 return '', 200
 
             elif callback_data == 'back':
                 user_state[chat_id] = {'step': 'awaiting_movie_name', 'last_active': datetime.now()}
                 send_long_message(
                     chat_id,
-                    "🔍 <b>Enter a new movie name to search.</b>\n\nExample: <code>Animal 2023</code>",
+                    f"🔍 <b>Enter a new movie name to search.</b>\n\nExample: <code>Animal 2023</code>",
                     reply_to_message_id=message_id
                 )
                 bot.answer_callback_query(callback['id'])
@@ -311,10 +313,15 @@ def telegram_webhook():
                 return '', 200
 
             elif callback_data.startswith('more_'):
-                _, site, offset = callback_data.split('_')
-                offset = int(offset)
+                try:
+                    _, site, offset = callback_data.split('_')
+                    offset = int(offset)
+                except ValueError:
+                    bot.answer_callback_query(callback['id'], text="Invalid selection")
+                    logger.warning(f"User {chat_id} sent invalid more callback: {callback_data}")
+                    return '', 200
                 if site not in state['site_results']:
-                    bot.answer_callback_query(callback['id'], text="❌ Invalid site!", show_alert=True)
+                    bot.answer_callback_query(callback['id'], text="❌ Error: Invalid Site", show_alert=True)
                     logger.warning(f"User {chat_id} requested more for invalid site: {site}")
                     return '', 200
                 titles = state['site_results'][site]['titles']
@@ -323,7 +330,7 @@ def telegram_webhook():
                     chat_id=chat_id,
                     message_id=message_id,
                     text=f"🎥 <b>Results from {site.capitalize()}:</b>\n\n{titles_text}\n\n"
-                         f"Click a button below to get download links.",
+                    f"Click a button below to get download links.",
                     parse_mode='HTML',
                     reply_markup=create_inline_keyboard(site, titles, offset)
                 )
@@ -338,7 +345,7 @@ def telegram_webhook():
                     if site not in state['site_results'] or index >= len(state['site_results'][site]['links']):
                         raise ValueError("Invalid selection")
                 except ValueError:
-                    bot.answer_callback_query(callback['id'], text="❌ Invalid selection!", show_alert=True)
+                    bot.answer_callback_query(callback['id'], text="❌ Invalid Selection", show_alert=True)
                     logger.warning(f"User {chat_id} sent invalid callback: {callback_data}")
                     return '', 200
 
@@ -367,7 +374,7 @@ def telegram_webhook():
                         f"😕 <b>No Links Found for '{selected_title}'</b>\n\n"
                         f"Possible reasons:\n"
                         "• Links not available on {site}.\n"
-                        "• Site structure may have changed.\n\n"
+                        "• Site structure may have changed.\n"
                         f"Select another movie from the previous results or start a new search with /start.",
                         reply_to_message_id=message_id
                     )
@@ -432,7 +439,7 @@ def cleanup():
 state_cleanup_thread = threading.Thread(target=cleanup_expired_states, daemon=True)
 state_cleanup_thread.start()
 
-# Start keep-alive thread
+# Start keep_alive thread
 keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
 keep_alive_thread.start()
 
