@@ -34,25 +34,13 @@ SITE_CONFIG = {
 CONFIG_FILE = 'site_config.json'
 
 def validate_domain(domain, site_key):
-    """Validate the domain format for the given site."""
-    # Basic domain regex (allows subdomains, common TLDs)
-    domain_pattern = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$', re.IGNORECASE)
-    if not domain_pattern.match(domain):
-        logger.warning(f"Invalid domain format for {site_key}: {domain}")
-        return False
-
-    # Site-specific validation
-    expected_prefixes = {
-        'hdmovie2': ['hdmovie2'],
-        'hdhub4u': ['hdhub4u'],
-        'cinevood': ['cinevood', '1cinevood']
-    }
-    prefix = domain.split('.')[0].lower()
-    if prefix not in [p.lower() for p in expected_prefixes[site_key]]:
-        logger.warning(f"Domain {domain} prefix '{prefix}' does not match expected prefixes {expected_prefixes[site_key]} for {site_key}")
-        return False
-
-    logger.debug(f"Domain {domain} validated successfully for {site_key}")
+    """Accept any domain string for the given site without strict validation."""
+    
+    if not domain.strip():
+        logger.warning(f"Empty domain provided for {site_key}")
+        return False  # still prevent empty domains
+    
+    logger.debug(f"Domain '{domain}' accepted for {site_key} (no validation applied)")
     return True
 
 def load_site_config():
