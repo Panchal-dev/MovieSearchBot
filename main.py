@@ -9,8 +9,8 @@ from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from config import ALLOWED_IDS, TELEGRAM_BOT_TOKEN, SITE_CONFIG, update_site_domain, logger
-from hdmovie2 import get_movie_titles_and_links as hdmovie2_titles, get_download_links as hdmovie2_links
-from hdhub4u import get_movie_titles_and_links as hdhub4u_titles, get_download_links as hdhub4u_links
+from hdmovie2 import get_movie_titles_and_links as hdmovie2_titles, get_download_links as hdmovie2_links, get_latest_movies as hdmovie2_latest
+from hdhub4u import get_movie_titles_and_links as hdhub4u_titles, get_download_links as hdhub4u_links, get_latest_movies as hdhub4u_latest
 from cinevood import get_movie_titles_and_links as cinevood_titles, get_download_links as cinevood_links, get_latest_movies as cinevood_latest
 
 app = Flask(__name__)
@@ -88,6 +88,29 @@ def search_movies(movie_name):
 
     return site_results
 
+def get_latest_movies_all_sites():
+    """Fetch latest movies from all sites concurrently."""
+    site_results = {}
+    site_functions = [
+        ('hdmovie2', hdmovie2_latest),
+        ('hdhub4u', hdhub4u_latest),
+        ('cinevood', cinevood_latest)
+    ]
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(func): site for site, func in site_functions}
+        for future in futures:
+            site = futures[future]
+            try:
+                titles, links = future.result(timeout=20)
+                if titles:
+                    site_results[site] = {'titles': titles, 'links': [(link, site) for link in links]}
+                    logger.info(f"Fetched {len(titles)} latest titles from {site}")
+            except Exception as e:
+                logger.error(f"Error fetching latest from {site}: {e}")
+
+    return site_results
+
 def get_download_links_for_movie(link, site):
     """Get download links based on the site with retries."""
     site_functions = {
@@ -123,7 +146,7 @@ def telegram_webhook():
             text = message.get('text', '').strip()
 
             if chat_id not in ALLOWED_IDS:
-                send_long_message(chat_id, "🚫 <b>Access Restricted</b>\n\nThis bot is limited to authorized users only.", reply_to_message_id=message_id)
+                send_long_message(chat_id, "🚫 <b>Access Denied</b>\n\nThis bot is restricted to authorized users only.", reply_to_message_id=message_id)
                 logger.info(f"Unauthorized access by chat_id {chat_id}")
                 return '', 200
 
@@ -141,9 +164,10 @@ def telegram_webhook():
                     "📋 You'll receive separate lists from each site with buttons to select movies.\n"
                     "📥 Click a button to get download links.\n\n"
                     "📌 <b>Commands:</b>\n"
-                    "• /latest - View latest movies from cinevood\n"
+                    "• /latest - View latest movies from all sites\n"
                     "• /update_domain - Update a site's domain\n"
                     "• /cancel - Cancel the current operation\n\n"
+                    "\n"
                     "💡 <b>Example:</b> <code>Animal 2023</code>",
                     reply_to_message_id=message_id
                 )
@@ -155,19 +179,18 @@ def telegram_webhook():
                     'site_results': {},
                     'last_active': datetime.now()
                 }
-                send_long_message(chat_id, "🔍 <b>Fetching latest movies from cinevood...</b>\n\nPlease wait.", reply_to_message_id=message_id)
-                logger.info(f"User {chat_id} requested latest movies from cinevood")
-                titles, links = cinevood_latest()
-                site_results = {'cinevood': {'titles': titles, 'links': [(link, 'cinevood') for link in links]}}
+                send_long_message(chat_id, "🔍 <b>Fetching latest movies from all sites...</b>\n\nPlease wait a moment.", reply_to_message_id=message_id)
+                logger.info(f"User {chat_id} requested latest movies from all sites")
+                site_results = get_latest_movies_all_sites()
                 user_state[chat_id]['site_results'] = site_results
 
-                if not titles:
+                if not site_results:
                     del user_state[chat_id]
                     send_long_message(
                         chat_id,
-                        "😕 <b>No Latest Movies Found on cinevood</b>\n\n"
+                        "😕 <b>No Latest Movies Found</b>\n\n"
                         "Possible reasons:\n"
-                        "• Site may be down or blocked.\n"
+                        "• Sites may be down or blocked.\n"
                         "• No movies available.\n\n"
                         "Try again later or search with /start.",
                         reply_to_message_id=message_id
@@ -175,15 +198,17 @@ def telegram_webhook():
                     logger.info(f"No latest movies found for user {chat_id}")
                     return '', 200
 
-                titles_text = "\n".join([f"• {title}" for title in titles[:MAX_RESULTS_PER_SITE]])
-                send_long_message(
-                    chat_id,
-                    f"🎥 <b>Latest Movies from cinevood:</b>\n\n{titles_text}\n\n"
-                    f"Click a button below to get download links.",
-                    reply_to_message_id=message_id,
-                    reply_markup=create_inline_keyboard('cinevood', titles)
-                )
-                logger.info(f"User {chat_id} received {len(titles)} latest movies from cinevood")
+                for site, results in site_results.items():
+                    titles = results['titles']
+                    titles_text = "\n".join([f"• {title}" for title in titles[:MAX_RESULTS_PER_SITE]])
+                    send_long_message(
+                        chat_id,
+                        f"🎥 <b>Latest Movies from {site.capitalize()}:</b>\n\n{titles_text}\n\n"
+                        f"Click a button below to get download links.",
+                        reply_to_message_id=message_id,
+                        reply_markup=create_inline_keyboard(site, titles)
+                    )
+                    logger.info(f"User {chat_id} received {len(titles)} latest movies from {site}")
 
             elif text.lower() == '/cancel':
                 if chat_id in user_state:

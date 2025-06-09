@@ -86,7 +86,6 @@ def get_latest_movies():
                         all_titles.append(f"{movie_count}. {title} (cinevood)")
                         movie_links.append(link)
 
-            # Check for next page, but respect max_pages limit
             pagination = soup.find('div', class_='pagination')
             next_page = pagination.find('a', class_='next') if pagination else None
             if not next_page or page == max_pages:
@@ -133,7 +132,6 @@ def get_download_links(movie_url):
                 description = h6.text.strip()
                 if any(exclude in description.lower() for exclude in ['watch online', 'trailer']):
                     continue
-                # Find the next <a> tag with maxbutton class after the h6
                 next_a = h6.find_next('a', class_='maxbutton')
                 if next_a and 'href' in next_a.attrs:
                     link_url = next_a['href']
