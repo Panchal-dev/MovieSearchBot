@@ -19,10 +19,10 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 # Store user state with expiration
 user_state = {}  # {chat_id: {'step': str, 'movie_name': str, 'current_site': str, 'site_results': {site: {'titles': [], 'links': []}}, 'last_active': datetime}}
 STATE_TIMEOUT = timedelta(minutes=30)
-MAX_MESSAGE_LENGTH = 4000
+MAX_MESSAGE_LENGTH = 40000
 MAX_RETRIES = 3
-MAX_RESULTS_PER_SITE = 15
-BUTTON_TEXT_LIMIT = 50
+MAX_RESULTS_PER_SITE = 150
+BUTTON_TEXT_LIMIT = 500
 
 # Site configuration with emojis
 SITES = {
@@ -543,7 +543,7 @@ def telegram_webhook():
                     links_text = ""
                     for i, link in enumerate(download_links[:10], 1):
                         title, url = link if isinstance(link, tuple) else (f"Link {i}", link)
-                        links_text += f"{i}) <b>{title}</b>\n<a href='{url}'>{url}</a>\n\n"
+                        links_text += f"<b>{i}) {title}</b>\n{url}\n\n"
                     
                     final_text = (
                         f"✅ <b>Download Links Ready!</b>\n\n"
