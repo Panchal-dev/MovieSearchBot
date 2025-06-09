@@ -76,8 +76,9 @@ def update_site_domain(site_key, new_domain):
         logger.warning(f"Invalid site key: {site_key}")
         return False
 
-    # Clean the domain
-    cleaned_domain = new_domain.lstrip('https://').rstrip('/')
+    # Safely remove protocol and trailing slash
+    cleaned_domain = re.sub(r'^https?://', '', new_domain.strip().rstrip('/'))
+
     if not validate_domain(cleaned_domain, site_key):
         logger.warning(f"Invalid domain for {site_key}: {cleaned_domain}")
         return False
