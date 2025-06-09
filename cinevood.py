@@ -49,6 +49,60 @@ def get_movie_titles_and_links(movie_name):
 
     return all_titles, movie_links
 
+def get_latest_movies():
+    """Scrape the latest movies from cinevood's main pages (up to 10 pages)."""
+    base_url = f"https://{SITE_CONFIG['cinevood']}/"
+    scraper = cloudscraper.create_scraper()
+    page = 1
+    max_pages = 10
+    movie_count = 0
+    all_titles = []
+    movie_links = []
+
+    while page <= max_pages:
+        url = base_url if page == 1 else f"https://{SITE_CONFIG['cinevood']}/page/{page}/"
+        logger.debug(f"Fetching cinevood latest movies page {page}: {url}")
+        try:
+            response = scraper.get(url, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            content_box = soup.find('div', id='content_box')
+            if not content_box:
+                logger.info(f"No content_box found on cinevood page {page}")
+                break
+
+            movie_elements = content_box.select('article.latestPost.excerpt')
+            if not movie_elements:
+                logger.info(f"No movie elements found on cinevood page {page}")
+                break
+
+            for element in movie_elements:
+                title_tag = element.select_one('h2.title.front-view-title a')
+                if title_tag:
+                    title = title_tag.text.strip()
+                    link = title_tag['href']
+                    if title and not any(exclude in title.lower() for exclude in ['©', 'all rights reserved']):
+                        movie_count += 1
+                        all_titles.append(f"{movie_count}. {title} (cinevood)")
+                        movie_links.append(link)
+
+            # Check for next page, but respect max_pages limit
+            pagination = soup.find('div', class_='pagination')
+            next_page = pagination.find('a', class_='next') if pagination else None
+            if not next_page or page == max_pages:
+                logger.info(f"Stopping at page {page} (max_pages reached or no next page)")
+                break
+
+            page += 1
+            time.sleep(1)
+
+        except Exception as e:
+            logger.error(f"Error fetching cinevood latest movies page {page}: {e}")
+            break
+
+    logger.info(f"Fetched {len(all_titles)} latest movies from cinevood")
+    return all_titles, movie_links
+
 def get_download_links(movie_url):
     scraper = cloudscraper.create_scraper()
     try:
