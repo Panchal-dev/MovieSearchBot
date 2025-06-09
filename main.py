@@ -19,10 +19,10 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 # Store user state with expiration
 user_state = {}  # {chat_id: {'step': str, 'movie_name': str, 'site_results': {site: {'titles': [], 'links': []}}, 'last_active': datetime}}
 STATE_TIMEOUT = timedelta(minutes=30)  # Expire state after 30 minutes
-MAX_MESSAGE_LENGTH = 4000  # Telegram message limit
+MAX_MESSAGE_LENGTH = 400000  # Telegram message limit
 MAX_RETRIES = 3  # Retry attempts for requests
-MAX_RESULTS_PER_SITE = 10  # Limit results per site
-BUTTON_TEXT_LIMIT = 60  # Telegram button text limit
+MAX_RESULTS_PER_SITE = 10000  # Limit results per site
+BUTTON_TEXT_LIMIT = 60000  # Telegram button text limit
 
 def cleanup_expired_states():
     """Remove expired user states."""
