@@ -15,7 +15,7 @@ from telegram.ext import (
     ConversationHandler,
 )
 from telegram.error import Conflict, NetworkError, TimedOut
-from tornado.web import Application as TornadoApp, RequestHandler
+from aiohttp import web
 
 # Set up logging
 logging.basicConfig(
@@ -402,17 +402,17 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         logger.warning("No message available to reply to in error handler.")
 
-# Health check handler for Railway
-class HealthCheckHandler(RequestHandler):
-    def get(self):
-        self.write("OK")
-        self.set_status(200)
+# Health check endpoint
+async def health_check(request):
+    logger.info("Health check requested")
+    return web.Response(text="OK", status=200)
 
-def main():
-    # Load Telegram bot token and webhook URL from environment variables
+async def start_application():
+    # Load environment variables
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     webhook_url = os.getenv("WEBHOOK_URL")
-    
+    port = int(os.getenv("PORT", 8443))
+
     if not bot_token:
         logger.error("TELEGRAM_BOT_TOKEN environment variable not set.")
         return
@@ -425,7 +425,7 @@ def main():
         webhook_url = f"{webhook_url.rstrip('/')}/webhook"
         logger.info(f"Corrected webhook URL to: {webhook_url}")
 
-    # Initialize Telegram bot with webhook
+    # Initialize Telegram bot
     try:
         application = (
             Application.builder()
@@ -462,28 +462,42 @@ def main():
         application.add_handler(update_url_handler)
         application.add_error_handler(error_handler)
 
-        # Set up Tornado application for health check
-        port = int(os.getenv("PORT", 8443))
-        tornado_app = TornadoApp([
-            (r"/health", HealthCheckHandler),
-        ])
+        # Set up aiohttp app for health check
+        app = web.Application()
+        app.router.add_get('/health', health_check)
+
+        # Start aiohttp server
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        logger.info(f"Health check server started on port {port}")
 
         # Set webhook
         logger.info(f"Setting webhook: {webhook_url}")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            webhook_url=webhook_url,
-            drop_pending_updates=True,
-            url_path="/webhook"
+        await application.initialize()
+        await application.bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True
         )
+        await application.start()
+        logger.info("Application started")
+
+        # Keep the application running
+        while True:
+            await asyncio.sleep(3600)  # Sleep for an hour
+
     except (Conflict, NetworkError, TimedOut) as e:
         logger.error(f"Webhook setup error: {e}")
-        time.sleep(5)  # Wait before retrying
-        main()  # Retry setting up webhook
+        await asyncio.sleep(5)
+        await start_application()  # Retry
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        return
+        raise
+
+def main():
+    import asyncio
+    asyncio.run(start_application())
 
 if __name__ == "__main__":
     main()
