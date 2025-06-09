@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from datetime import datetime
+import re
 
 # Initialize logging
 log_dir = "logs"
@@ -32,14 +33,39 @@ SITE_CONFIG = {
 # File to store updated domains
 CONFIG_FILE = 'site_config.json'
 
+def validate_domain(domain, site_key):
+    """Validate the domain format for the given site."""
+    # Basic domain regex (allows subdomains, common TLDs)
+    domain_pattern = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$')
+    if not domain_pattern.match(domain):
+        logger.warning(f"Invalid domain format: {domain}")
+        return False
+
+    # Site-specific validation
+    expected_prefixes = {
+        'hdmovie2': ['hdmovie2'],
+        'hdhub4u': ['hdhub4u'],
+        'cinevood': ['cinevood', '1cinevood']
+    }
+    prefix = domain.split('.')[0]
+    if prefix not in expected_prefixes[site_key]:
+        logger.warning(f"Domain {domain} does not match expected prefix for {site_key}")
+        return False
+
+    return True
+
 def load_site_config():
     """Load site domains from file or use defaults."""
     global SITE_CONFIG
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
-                SITE_CONFIG = json.load(f)
-            logger.info("Loaded site config from file")
+                loaded_config = json.load(f)
+                # Validate loaded domains
+                for key in SITE_CONFIG.keys():
+                    if key in loaded_config and validate_domain(loaded_config[key], key):
+                        SITE_CONFIG[key] = loaded_config[key]
+                logger.info("Loaded site config from file")
     except Exception as e:
         logger.error(f"Error loading site config: {e}")
         save_site_config()  # Save default config if loading fails
@@ -55,13 +81,21 @@ def save_site_config():
 
 def update_site_domain(site_key, new_domain):
     """Update a site's domain and save to file."""
-    if site_key in SITE_CONFIG:
-        SITE_CONFIG[site_key] = new_domain.lstrip('https://').rstrip('/')
-        save_site_config()
-        logger.info(f"Updated {site_key} domain to {new_domain}")
-        return True
-    logger.warning(f"Invalid site key: {site_key}")
-    return False
+    if site_key not in SITE_CONFIG:
+        logger.warning(f"Invalid site key: {site_key}")
+        return False
+
+    # Clean the domain
+    cleaned_domain = new_domain.lstrip('https://').rstrip('/')
+    if not validate_domain(cleaned_domain, site_key):
+        logger.warning(f"Invalid domain for {site_key}: {cleaned_domain}")
+        return False
+
+    # Update and save
+    SITE_CONFIG[site_key] = cleaned_domain
+    save_site_config()
+    logger.info(f"Updated {site_key} domain to {cleaned_domain}")
+    return True
 
 # Load config at startup
 load_site_config()
