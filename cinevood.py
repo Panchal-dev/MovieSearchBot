@@ -56,9 +56,10 @@ def get_download_links(movie_url):
         response = scraper.get(movie_url, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        download_sections = soup.select('div.download-btns')
         download_links = []
 
+        # Try existing structure: div.download-btns
+        download_sections = soup.select('div.download-btns')
         for section in download_sections:
             description_tag = section.find('h6')
             link_tags = section.select('div.cat-btn-div2 a[href]')
@@ -71,6 +72,21 @@ def get_download_links(movie_url):
                     link_url = link_tag['href']
                     download_links.append(f"{description} [{link_text}]: {link_url}")
 
+        # If no links found, try new structure: h6 followed by maxbutton links
+        if not download_links:
+            h6_tags = soup.select('h6')
+            for h6 in h6_tags:
+                description = h6.text.strip()
+                if any(exclude in description.lower() for exclude in ['watch online', 'trailer']):
+                    continue
+                # Find the next <a> tag with maxbutton class after the h6
+                next_a = h6.find_next('a', class_='maxbutton')
+                if next_a and 'href' in next_a.attrs:
+                    link_url = next_a['href']
+                    link_text = next_a.find('span', class_='mb-text').text.strip() if next_a.find('span', class_='mb-text') else 'Download'
+                    download_links.append(f"{description} [{link_text}]: {link_url}")
+
+        logger.info(f"Fetched {len(download_links)} download links from cinevood")
         return download_links
 
     except Exception as e:
