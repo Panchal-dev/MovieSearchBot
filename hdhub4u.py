@@ -18,7 +18,7 @@ def get_movie_titles_and_links(movie_name):
     all_titles = []
     movie_links = []
 
-    while page <= 10:
+    while True:
         url = base_url if page == 1 else f"https://{SITE_CONFIG['hdhub4u']}/page/{page}/?s={search_query}"
         logger.debug(f"Fetching hdhub4u page {page}: {url}")
         try:
@@ -41,6 +41,10 @@ def get_movie_titles_and_links(movie_name):
                         movie_count += 1
                         all_titles.append(f"{movie_count}. {title} (hdhub4u)")
                         movie_links.append(link)
+
+            pagination = soup.find('div', class_='pagination-wrap')
+            if not pagination or not pagination.find('a', class_='next page-numbers'):
+                break
 
             page += 1
             time.sleep(1)
@@ -90,6 +94,12 @@ def get_latest_movies():
                         movie_count += 1
                         all_titles.append(f"{movie_count}. {title} (hdhub4u)")
                         movie_links.append(link)
+
+            pagination = soup.find('div', class_='pagination-wrap')
+            next_page = pagination.find('a', class_='next page-numbers') if pagination else None
+            if not next_page or page == max_pages:
+                logger.info(f"Stopping at page {page} (max_pages reached or no next page)")
+                break
 
             page += 1
             time.sleep(1)
