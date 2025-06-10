@@ -8,11 +8,12 @@ def get_movie_titles_and_links(movie_name):
     base_url = f"https://{SITE_CONFIG['cinevood']}/?s={search_query}"
     scraper = cloudscraper.create_scraper()
     page = 1
+    max_pages = 10
     movie_count = 0
     all_titles = []
     movie_links = []
 
-    while True:
+    while page <= max_pages:
         url = base_url if page == 1 else f"https://{SITE_CONFIG['cinevood']}/page/{page}/?s={search_query}"
         logger.debug(f"Fetching cinevood page {page}: {url}")
         try:
@@ -37,7 +38,8 @@ def get_movie_titles_and_links(movie_name):
 
             pagination = soup.find('div', class_='pagination')
             next_page = pagination.find('a', class_='next') if pagination else None
-            if not next_page:
+            if not next_page or page == max_pages:
+                logger.info(f"Stopping at page {page} (max_pages reached or no next page)")
                 break
 
             page += 1
@@ -47,10 +49,11 @@ def get_movie_titles_and_links(movie_name):
             logger.error(f"Error fetching cinevood page {page}: {e}")
             break
 
+    logger.info(f"Fetched {len(all_titles)} titles from cinevood search")
     return all_titles, movie_links
 
 def get_latest_movies():
-    """Scrape the latest movies from cinevood's main pages (up to 10 pages)."""
+    """Fetch latest movies from cinevood's main pages (up to 10 pages)."""
     base_url = f"https://{SITE_CONFIG['cinevood']}/"
     scraper = cloudscraper.create_scraper()
     page = 1
@@ -111,7 +114,6 @@ def get_download_links(movie_url):
         soup = BeautifulSoup(response.text, 'html.parser')
         download_links = []
 
-        # Try existing structure: div.download-btns
         download_sections = soup.select('div.download-btns')
         for section in download_sections:
             description_tag = section.find('h6')
@@ -125,7 +127,6 @@ def get_download_links(movie_url):
                     link_url = link_tag['href']
                     download_links.append(f"{description} [{link_text}]: {link_url}")
 
-        # If no links found, try new structure: h6 followed by maxbutton links
         if not download_links:
             h6_tags = soup.select('h6')
             for h6 in h6_tags:
