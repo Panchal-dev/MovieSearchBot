@@ -1,32 +1,43 @@
 import cloudscraper
 from bs4 import BeautifulSoup
 import time
-from config import SITE_CONFIG, logger
+import os
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def get_movie_titles_and_links(movie_name):
-    """Search movies on CineVood (up to 10 pages)."""
-    search_query = f"{movie_name.replace(' ', '-')}".lower()
-    base_url = f"https://{SITE_CONFIG['cinevood']}/?s={search_query}"
+    """Search for movies on CineVood (up to 10 pages)."""
+    search_query = f"{movie_name.replace(' ', '+').lower()}"
+    base_url = f"https://1cinevood.asia/?s={search_query}"
     scraper = cloudscraper.create_scraper()
     page = 1
     max_pages = 10
-    movie_count = 0
     all_titles = []
     movie_links = []
 
     while page <= max_pages:
-        url = base_url if page == 1 else f"https://{SITE_CONFIG['cinevood']}/page/{page}/?s={search_query}"
-        logger.debug(f"Fetching cinevood page {page}: {url}")
+        url = base_url if page == 1 else f"https://1cinevood.asia/page/{page}/?s={search_query}"
+        logger.debug(f"Fetching CineVood page {page}: {url}")
         try:
             response = scraper.get(url, timeout=10)
             response.raise_for_status()
+            logger.info(f"Status code for page {page}: {response.status_code}")
+
             soup = BeautifulSoup(response.text, 'html.parser')
             movie_elements = soup.select('article.latestPost.excerpt')
+            logger.info(f"Found {len(movie_elements)} movie elements on page {page}")
 
             if not movie_elements:
-                logger.info(f"No movie elements found on cinevood page {page}")
+                logger.warning(f"No movie elements found on page {page}")
+                with open(f"debug_page_{page}.html", "w", encoding="utf-8") as f:
+                    f.write(response.text)
+                logger.info(f"Saved page HTML to debug_page_{page}.html")
                 break
 
+            movie_count = len(all_titles)
             for element in movie_elements:
                 title_tag = element.select_one('h2.title.front-view-title a')
                 if title_tag:
@@ -40,46 +51,48 @@ def get_movie_titles_and_links(movie_name):
             pagination = soup.find('div', class_='pagination')
             next_page = pagination.find('a', class_='next') if pagination else None
             if not next_page or page == max_pages:
-                logger.info(f"Stopping at page {page} (max_pages reached or no next page)")
+                logger.info(f"Stopping at page {page}")
                 break
 
             page += 1
-            time.sleep(1)
+            time.sleep(3)
 
         except Exception as e:
-            logger.error(f"Error fetching cinevood page {page}: {e}")
+            logger.error(f"Error fetching page {page}: {e}")
             break
 
-    logger.info(f"Fetched {len(all_titles)} titles from cinevood search")
+    logger.info(f"Fetched {len(all_titles)} titles from CineVood search")
     return all_titles, movie_links
 
 def get_latest_movies():
     """Fetch latest movies from CineVood's main pages (up to 10 pages)."""
-    base_url = f"https://{SITE_CONFIG['cinevood']}/"
+    base_url = f"https://1cinevood.asia/"
     scraper = cloudscraper.create_scraper()
     page = 1
     max_pages = 10
-    movie_count = 0
     all_titles = []
     movie_links = []
 
     while page <= max_pages:
-        url = base_url if page == 1 else f"https://{SITE_CONFIG['cinevood']}/page/{page}/"
-        logger.debug(f"Fetching cinevood latest movies page {page}: {url}")
+        url = base_url if page == 1 else f"https://1cinevood.asia/page/{page}/"
+        logger.debug(f"Fetching CineVood latest movies page {page}: {url}")
         try:
             response = scraper.get(url, timeout=10)
             response.raise_for_status()
+            logger.info(f"Status code for page {page}: {response.status_code}")
+
             soup = BeautifulSoup(response.text, 'html.parser')
-            content_box = soup.find('div', id='content_box')
-            if not content_box:
-                logger.info(f"No content_box found on cinevood page {page}")
-                break
+            movie_elements = soup.select('article.latestPost.excerpt')
+            logger.info(f"Found {len(movie_elements)} movie elements on page {page}")
 
-            movie_elements = content_box.select('article.latestPost.excerpt')
             if not movie_elements:
-                logger.info(f"No movie elements found on cinevood page {page}")
+                logger.warning(f"No movie elements found on page {page}")
+                with open(f"debug_latest_page_{page}.html", "w", encoding="utf-8") as f:
+                    f.write(response.text)
+                logger.info(f"Saved page HTML to debug_latest_page_{page}.html")
                 break
 
+            movie_count = len(all_titles)
             for element in movie_elements:
                 title_tag = element.select_one('h2.title.front-view-title a')
                 if title_tag:
@@ -93,36 +106,38 @@ def get_latest_movies():
             pagination = soup.find('div', class_='pagination')
             next_page = pagination.find('a', class_='next') if pagination else None
             if not next_page or page == max_pages:
-                logger.info(f"Stopping at page {page} (max_pages reached or no next page)")
+                logger.info(f"Stopping at page {page}")
                 break
 
             page += 1
-            time.sleep(1)
+            time.sleep(3)
 
         except Exception as e:
-            logger.error(f"Error fetching cinevood latest movies page {page}: {e}")
+            logger.error(f"Error fetching latest movies page {page}: {e}")
             break
 
-    logger.info(f"Fetched {len(all_titles)} latest movies from cinevood")
+    logger.info(f"Fetched {len(all_titles)} latest movies from CineVood")
     return all_titles, movie_links
 
 def get_download_links(movie_url):
     """Fetch download links from CineVood movie page."""
     scraper = cloudscraper.create_scraper()
-    download_links = []  # Initialize the list
-    
+    download_links = []
+
+    logger.debug(f"Fetching CineVood movie page: {movie_url}")
     try:
-        logger.debug(f"Fetching cinevood movie page: {movie_url}")
         response = scraper.get(movie_url, timeout=10)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+        logger.info(f"Status code for movie page: {response.status_code}")
 
-        # Try multiple selectors for download links
+        soup = BeautifulSoup(response.text, 'html.parser')
+        # Multiple selectors to capture all download links
         selectors = [
-            'div.download-btns a[href]',  # Primary download buttons
-            'div.entry-content a[href]',   # Links in content
-            'p a[href]',                   # Links in paragraphs
-            'div.cat-btn-div2 a[href]'     # Alternative button divs
+            'div.download-btns a[href]',
+            'div.entry-content a[href]',
+            'p a[href]',
+            'div.cat-btn-div2 a[href]',
+            'a.maxbutton a[href]'
         ]
 
         for selector in selectors:
@@ -130,40 +145,33 @@ def get_download_links(movie_url):
             for link_tag in link_tags:
                 link_text = link_tag.text.strip()
                 link_url = link_tag['href']
-                if link_text and link_url and not any(exclude in link_text.lower() for exclude in ['watch online', 'trailer', 'telegram']):
-                    # Try to find associated description
+                if link_text and link_url and not any(exclude in link_text.lower() for exclude in ['watch online', 'trailer', 'telegram', 'join', 'home']):
+                    # Extract description from h6 or parent
                     description = ""
                     parent_h6 = link_tag.find_previous('h6')
                     if parent_h6:
                         description = parent_h6.text.strip()
-                    elif link_tag.find_parent('div', class_='download-btns'):
-                        description_tag = link_tag.find_parent('div').find('h6')
-                        description = description_tag.text.strip() if description_tag else link_text
                     else:
-                        description = f"{description} [{link_text}]" if description else link_text
-                    download_links.append(f"{description}: {link_url}")
+                        description = link_text
+                    if any(indicator in description.lower() for indicator in ['download', 'gdflix', 'filepress', '1080p', '720p', '480p', 'hd']):
+                        download_links.append(f"{description} [{link_text}]: {link_url}")
 
-        # Also check for maxbutton links
-        max_buttons = soup.select('a.maxbutton')
-        for button in max_buttons:
-            link_text = button.find('span', class_='mb-text').text.strip() if button.find('span', class_='mb-text') else 'Download'
-            link_url = button['href']
-            description_parent = button.find_previous('h6')
-            description = description_parent.text.strip() if description_parent else link_text
-            if not any(exclude in description.lower() or exclude in link_text.lower() for exclude in ['watch online', 'trailer', 'telegram']):
-                download_links.append(f"{description} [{link_text}]: {link_url}")
+        # Remove duplicates
+        unique_links = list(dict.fromkeys(download_links))
 
-        # Remove duplicates while preserving order
-        unique_links = []
-        seen = set()
-        for link in download_links:
-            if link not in seen:
-                seen.add(link)
-                unique_links.append(link)
+        if not unique_links:
+            logger.warning("No download links found on movie page")
+            print.warning("No download page found on this page.")
+            with open("debug_movie_page.html", "w", encoding="utf-8") as f:
+                try:
+                    f.write(response.text)
+                    logger.info("Saved movie page HTML to debug_movie_page.html")
+                except Exception as e:
+                    logger.error(f"Failed to write debug file: {e}")
 
-        logger.info(f"Fetched {len(unique_links)} download links from cinevood")
+        logger.info(f"Fetched {len(unique_links)} download links from CineVood")
         return unique_links
 
     except Exception as e:
-        logger.error(f"Error fetching cinevood download links: {e}")
+        logger.error(f"Error fetching movie page: {e}")
         return []
