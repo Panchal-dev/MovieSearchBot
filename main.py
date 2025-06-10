@@ -8,6 +8,7 @@ import atexit
 from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 from config import ALLOWED_IDS, TELEGRAM_BOT_TOKEN, SITE_CONFIG, update_site_domain, logger
 from hdmovie2 import get_movie_titles_and_links as hdmovie2_titles, get_download_links as hdmovie2_links, get_latest_movies as hdmovie2_latest
 from hdhub4u import get_movie_titles_and_links as hdhub4u_titles, get_download_links as hdhub4u_links, get_latest_movies as hdhub4u_latest
@@ -19,10 +20,12 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 # Store user state with expiration
 user_state = {}  # {chat_id: {'step': str, 'movie_name': str, 'current_site': str, 'site_results': {site: {'titles': [], 'links': []}}, 'last_active': datetime}}
 STATE_TIMEOUT = timedelta(minutes=30)
-MAX_MESSAGE_LENGTH = 4000
+MAX_MESSAGE_LENGTH = 3500  # Reduced to avoid Telegram limits
 MAX_RETRIES = 3
 MAX_RESULTS_PER_SITE = 15
 BUTTON_TEXT_LIMIT = 50
+URL_VALIDATION_KEYWORDS = ['download', 'gdflix', 'filepress', '1080p', '720p', '480p', 'hd']
+URL_EXCLUDE_KEYWORDS = ['watch online', 'trailer', 'telegram', 'join', 'home', 'how to download']
 
 # Site configuration with emojis
 SITES = {
@@ -41,18 +44,55 @@ def cleanup_expired_states():
             logger.info(f"Cleaned up expired state for chat_id {chat_id}")
         time.sleep(600)
 
+def is_valid_url(url, title=""):
+    """Validate URL to ensure it's a download link."""
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return False
+        if any(exclude in title.lower() or exclude in url.lower() for exclude in URL_EXCLUDE_KEYWORDS):
+            return False
+        if any(keyword in title.lower() or keyword in url.lower() for keyword in URL_VALIDATION_KEYWORDS):
+            return True
+        return False
+    except Exception:
+        return False
+
 def send_long_message(chat_id, text, reply_to_message_id=None, reply_markup=None):
-    """Send long messages by splitting if necessary."""
+    """Send long messages by splitting with HTML integrity."""
     try:
         if len(text) <= MAX_MESSAGE_LENGTH:
-            return bot.send_message(chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id, parse_mode='HTML', reply_markup=reply_markup, disable_web_page_preview=True)
+            return bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_to_message_id=reply_to_message_id,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
         parts = []
-        while text:
-            parts.append(text[:MAX_MESSAGE_LENGTH])
-            text = text[MAX_MESSAGE_LENGTH:]
+        current_part = ""
+        lines = text.split('\n')
+        for line in lines:
+            if len(current_part) + len(line) + 1 > MAX_MESSAGE_LENGTH:
+                parts.append(current_part)
+                current_part = line + '\n'
+            else:
+                current_part += line + '\n'
+        if current_part:
+            parts.append(current_part)
+        messages = []
         for i, part in enumerate(parts):
-            bot.send_message(chat_id=chat_id, text=part, parse_mode='HTML', reply_markup=reply_markup if i == len(parts) - 1 else None, disable_web_page_preview=True)
-        return parts[-1]
+            messages.append(
+                bot.send_message(
+                    chat_id=chat_id,
+                    text=part,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup if i == len(parts) - 1 else None,
+                    disable_web_page_preview=True
+                )
+            )
+        return messages[-1]
     except Exception as e:
         logger.error(f"Error sending message to chat_id {chat_id}: {e}")
         return None
@@ -62,14 +102,14 @@ def create_site_selection_keyboard(command):
     markup = InlineKeyboardMarkup(row_width=1)
     for i, (site_key, site_info) in enumerate(SITES.items(), 1):
         markup.add(InlineKeyboardButton(
-            f"{site_info['emoji']} {i}. {site_info['name']}", 
+            f"{site_info['emoji']} {i}. {site_info['name']} ({SITE_CONFIG[site_key]})",
             callback_data=f"{command}_site_{site_key}"
         ))
     markup.add(InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
     return markup
 
-def create_movie_selection_keyboard(site, titles, offset=0):
-    """Create inline keyboard for movie selection with enhanced UI."""
+def create_movie_selection_keyboard(scroll_id, site, titles, offset=0):
+    """Create scrollable inline keyboard for movie selection."""
     markup = InlineKeyboardMarkup(row_width=1)
     site_info = SITES.get(site, {'name': site.capitalize(), 'emoji': '🎬'})
     
@@ -78,58 +118,67 @@ def create_movie_selection_keyboard(site, titles, offset=0):
         title = titles[i]
         display_title = title[:BUTTON_TEXT_LIMIT] + "..." if len(title) > BUTTON_TEXT_LIMIT else title
         markup.add(InlineKeyboardButton(
-            f"🎥 {display_title}", 
-            callback_data=f"select_{site}_{i}"
+            f"🎥 {display_title}",
+            callback_data=f"select_{scroll_id}_{site}_{i}"
         ))
     
     nav_buttons = []
     if offset > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"prev_{site}_{max(0, offset-MAX_RESULTS_PER_SITE)}"))
+        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"prev_{scroll_id}_{site}_{max(0, offset-MAX_RESULTS_PER_SITE)}"))
     if end_index < len(titles):
-        nav_buttons.append(InlineKeyboardButton("➡️ Next", callback_data=f"next_{site}_{end_index}"))
+        nav_buttons.append(InlineKeyboardButton("➡️ Next", callback_data=f"next_{scroll_id}_{site}_{end_index}"))
     
     if nav_buttons:
         markup.row(*nav_buttons)
     
     markup.row(
-        InlineKeyboardButton("🔙 Back to Sites", callback_data="back_to_sites"),
+        InlineKeyboardButton("🔙 Back to Sites", callback_data=f"back_to_sites_{scroll_id}"),
         InlineKeyboardButton("🔍 New Search", callback_data="new_search")
     )
     markup.add(InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
     
     return markup
 
-def create_back_navigation_keyboard():
+def create_back_navigation_keyboard(scroll_id):
     """Create navigation keyboard for going back."""
     markup = InlineKeyboardMarkup(row_width=2)
     markup.row(
-        InlineKeyboardButton("🔙 Back to Sites", callback_data="back_to_sites"),
+        InlineKeyboardButton("🔙 Back to Sites", callback_data=f"back_to_sites_{scroll_id}"),
         InlineKeyboardButton("🔍 New Search", callback_data="new_search")
     )
     markup.add(InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
     return markup
 
 def search_movies_single_site(movie_name, site):
-    """Search movies on a single site."""
+    """Search movies on a single site with retry logic."""
     site_functions = {
         'hdmovie2': hdmovie2_titles,
         'hdhub4u': hdhub4u_titles,
         'cinevood': cinevood_titles
     }
     
-    try:
-        if site not in site_functions:
-            return [], []
-        
-        titles, links = site_functions[site](movie_name)
-        logger.info(f"Fetched {len(titles)} titles from {site}")
-        return titles, links
-    except Exception as e:
-        logger.error(f"Error searching {site}: {e}")
-        return [], []
+    for attempt in range(MAX_RETRIES):
+        try:
+            if site not in site_functions:
+                logger.error(f"Invalid site: {site}")
+                return [], []
+            
+            titles, links = site_functions[site](movie_name)
+            if not titles:
+                logger.warning(f"No titles found for '{movie_name}' on {site} (attempt {attempt + 1})")
+            else:
+                logger.info(f"Fetched {len(titles)} titles for '{movie_name}' from {site}")
+                return titles[:MAX_RESULTS_PER_SITE], links[:MAX_RESULTS_PER_SITE]
+        except Exception as e:
+            logger.warning(f"Error searching {site} (attempt {attempt + 1}): {e}")
+            if attempt == MAX_RETRIES - 1:
+                logger.error(f"All retries failed for {site}: {e}")
+                return [], []
+            time.sleep(2 * (attempt + 1))
+    return [], []
 
 def get_latest_movies_all_sites():
-    """Fetch latest movies from all sites concurrently, limited to 10 pages."""
+    """Fetch latest movies from all sites concurrently."""
     site_results = {}
     site_functions = [
         ('hdmovie2', hdmovie2_latest),
@@ -144,31 +193,52 @@ def get_latest_movies_all_sites():
             try:
                 titles, links = future.result(timeout=20)
                 if titles:
-                    site_results[site] = {'titles': titles, 'links': [(link, site) for link in links]}
+                    site_results[site] = {
+                        'titles': titles[:MAX_RESULTS_PER_SITE],
+                        'links': links[:MAX_RESULTS_PER_SITE]
+                    }
                     logger.info(f"Fetched {len(titles)} latest titles from {site}")
+                else:
+                    logger.warning(f"No latest titles found for {site}")
             except Exception as e:
                 logger.error(f"Error fetching latest from {site}: {e}")
 
     return site_results
 
 def get_download_links_for_movie(link, site):
-    """Get download links based on the site with retries."""
+    """Get download links with validation and retries."""
     site_functions = {
         'hdmovie2': hdmovie2_links,
         'hdhub4u': hdhub4u_links,
         'cinevood': cinevood_links
     }
+    
     for attempt in range(MAX_RETRIES):
         try:
             links = site_functions[site](link)
-            logger.info(f"Fetched {len(links)} download links from {site}")
-            return links
+            valid_links = []
+            for link in links:
+                parts = link.rsplit(':', 1)
+                if len(parts) == 2:
+                    title, url = parts
+                    title = title.strip()
+                    url = url.strip()
+                    if is_valid_url(url, title):
+                        valid_links.append(f"{title}: {url}")
+                elif is_valid_url(link):
+                    valid_links.append(f"Link: {link}")
+            if valid_links:
+                logger.info(f"Fetched {len(valid_links)} valid download links from {site}")
+                return valid_links[:10]
+            else:
+                logger.warning(f"No valid download links found for {link} on {site} (attempt {attempt + 1})")
         except Exception as e:
             logger.warning(f"Attempt {attempt + 1} failed for {site}: {e}")
             if attempt == MAX_RETRIES - 1:
                 logger.error(f"All retries failed for {site}: {e}")
                 return []
             time.sleep(2 * (attempt + 1))
+    return []
 
 @app.route('/telegram', methods=['POST'])
 def telegram_webhook():
@@ -203,17 +273,17 @@ def telegram_webhook():
                     "3️⃣ Select a movie from results\n"
                     "4️⃣ Get clickable download links!\n\n"
                     "🔍 <b>Enter a movie name:</b>\n"
-                    "💡 <i>Example: Avengers Endgame 2019</i>"
+                    "💡 <i>Example: Animal 2023</i>"
                 )
                 send_long_message(chat_id, welcome_text, reply_to_message_id=message_id)
                 logger.info(f"User {chat_id} started bot")
 
             elif text.lower() == '/latest':
-                user_state[chat_id] = {'step': 'latest_site_selection', 'last_active': datetime.now()}
+                user_state[chat_id] = {'step': 'latest_site_selection', 'scroll_id': f"latest_{chat_id}_{int(time.time())}", 'last_active': datetime.now()}
                 latest_text = (
                     "🔥 <b>Latest Movies</b>\n\n"
                     "🎬 <b>Choose a site to view the latest movies:</b>\n"
-                    "📍 <i>Shows recent uploads from the first 10 pages (or single page for HDMovie2)</i>"
+                    f"📍 <i>HDMovie2: Single page; Others: Up to 10 pages</i>"
                 )
                 send_long_message(
                     chat_id,
@@ -226,12 +296,12 @@ def telegram_webhook():
             elif text.lower() == '/cmd':
                 commands_text = (
                     "📋 <b>Available Commands:</b>\n\n"
-                    "🔹 <b>/start</b>: Start a new movie search by entering a movie name\n"
-                    "🔹 <b>/latest</b>: View the latest movies from the first 10 pages of each site\n"
-                    "🔹 <b>/cancel</b>: Cancel the current operation\n"
-                    "🔹 <b>/update_domain</b>: Update the domain for a specific site\n"
-                    "🔹 <b>/cmd</b>: Display this command list\n\n"
-                    "💡 <i>Use these commands to navigate the bot easily!</i>"
+                    "🔹 <b>/start</b>: Start a new movie search\n"
+                    "🔹 <b>/latest</b>: View latest movies\n"
+                    "🔹 <b>/cancel</b>: Cancel current operation\n"
+                    "🔹 <b>/update_domain</b>: Update site domain\n"
+                    "🔹 <b>/cmd</b>: Show this command list\n\n"
+                    "💡 <i>Use these to navigate easily!</i>"
                 )
                 send_long_message(chat_id, commands_text, reply_to_message_id=message_id)
                 logger.info(f"User {chat_id} requested command list")
@@ -261,13 +331,14 @@ def telegram_webhook():
 
                 if state['step'] == 'awaiting_movie_name':
                     if not text:
-                        send_long_message(chat_id, "❌ <b>Please enter a movie name</b>\n\n💡 <i>Example: Avatar 2022</i>", reply_to_message_id=message_id)
+                        send_long_message(chat_id, "❌ <b>Please enter a movie name</b>\n\n💡 <i>Example: In Laws 2020</i>", reply_to_message_id=message_id)
                         return '', 200
                     
                     user_state[chat_id].update({
                         'step': 'site_selection',
                         'movie_name': text,
                         'site_results': {},
+                        'scroll_id': f"search_{chat_id}_{int(time.time())}",
                         'last_active': datetime.now()
                     })
                     
@@ -376,13 +447,14 @@ def telegram_webhook():
                 bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text="🔍 <b>Enter a new movie name:</b>\n\n💡 <i>Example: Spider-Man 2021</i>",
+                    text="🔍 <b>Enter a new movie name:</b>\n\n💡 <i>Example: In Laws 2020</i>",
                     parse_mode='HTML'
                 )
                 bot.answer_callback_query(callback['id'])
                 return '', 200
 
-            elif callback_data == 'back_to_sites':
+            elif callback_data.startswith('back_to_sites_'):
+                scroll_id = callback_data.replace('back_to_sites_', '')
                 if state.get('step') == 'latest_selection':
                     user_state[chat_id]['step'] = 'latest_site_selection'
                     bot.edit_message_text(
@@ -391,7 +463,7 @@ def telegram_webhook():
                         text=(
                             "🔥 <b>Latest Movies</b>\n\n"
                             "🎬 <b>Choose a site to view the latest movies:</b>\n"
-                            "📍 <i>Shows recent uploads from the first 10 pages</i>"
+                            f"📍 <i>HDMovie2: Single page; Others: Up to 10 pages</i>"
                         ),
                         parse_mode='HTML',
                         reply_markup=create_site_selection_keyboard('latest')
@@ -420,6 +492,7 @@ def telegram_webhook():
 
                 movie_name = state['movie_name']
                 site_info = SITES.get(site, {'name': site.capitalize(), 'emoji': '🎬'})
+                scroll_id = state.get('scroll_id', f"search_{chat_id}_{int(time.time())}")
                 
                 bot.edit_message_text(
                     chat_id=chat_id,
@@ -443,7 +516,7 @@ def telegram_webhook():
                             f"• Different search terms"
                         ),
                         parse_mode='HTML',
-                        reply_markup=create_back_navigation_keyboard()
+                        reply_markup=create_back_navigation_keyboard(scroll_id)
                     )
                     bot.answer_callback_query(callback['id'])
                     return '', 200
@@ -451,7 +524,8 @@ def telegram_webhook():
                 user_state[chat_id].update({
                     'step': 'movie_selection',
                     'current_site': site,
-                    'site_results': {site: {'titles': titles, 'links': links}}
+                    'site_results': {site: {'titles': titles, 'links': links}},
+                    'scroll_id': scroll_id
                 })
 
                 results_text = (
@@ -465,7 +539,7 @@ def telegram_webhook():
                     message_id=message_id,
                     text=results_text,
                     parse_mode='HTML',
-                    reply_markup=create_movie_selection_keyboard(site, titles)
+                    reply_markup=create_movie_selection_keyboard(scroll_id, site, titles)
                 )
                 bot.answer_callback_query(callback['id'])
                 logger.info(f"User {chat_id} selected site {site} and found {len(titles)} results")
@@ -473,6 +547,7 @@ def telegram_webhook():
             elif callback_data.startswith('latest_site_'):
                 site = callback_data.replace('latest_site_', '')
                 site_info = SITES.get(site, {'name': site.capitalize(), 'emoji': '🎬'})
+                scroll_id = state.get('scroll_id', f"latest_{chat_id}_{int(time.time())}")
 
                 bot.edit_message_text(
                     chat_id=chat_id,
@@ -484,7 +559,8 @@ def telegram_webhook():
                 site_results = get_latest_movies_all_sites()
                 user_state[chat_id].update({
                     'step': 'latest_selection',
-                    'site_results': site_results
+                    'site_results': site_results,
+                    'scroll_id': scroll_id
                 })
 
                 if site not in site_results or not site_results[site]['titles']:
@@ -496,7 +572,7 @@ def telegram_webhook():
                             f"💡 <b>Try another site or check later</b>"
                         ),
                         parse_mode='HTML',
-                        reply_markup=create_back_navigation_keyboard()
+                        reply_markup=create_back_navigation_keyboard(scroll_id)
                     )
                     bot.answer_callback_query(callback['id'])
                     return '', 200
@@ -504,7 +580,7 @@ def telegram_webhook():
                 titles = site_results[site]['titles']
                 results_text = (
                     f"🔥 <b>Latest Movies</b>\n\n"
-                    f"🎬 <b>Site:</b> {site_info['emoji']} {site_info['name']}\n"
+                    f"🎬 <b>Site:</b> {site_info['emoji']} {site_info['name']}"
                     f"📊 <b>Found:</b> {len(titles)} movies\n\n"
                     f"📱 <b>Select a movie:</b>"
                 )
@@ -514,14 +590,14 @@ def telegram_webhook():
                     message_id=message_id,
                     text=results_text,
                     parse_mode='HTML',
-                    reply_markup=create_movie_selection_keyboard(site, titles)
+                    reply_markup=create_movie_selection_keyboard(scroll_id, site, titles)
                 )
                 bot.answer_callback_query(callback['id'])
                 logger.info(f"User {chat_id} selected site {site} for latest movies")
 
             elif callback_data.startswith(('next_', 'prev_')):
                 parts = callback_data.split('_')
-                action, site, offset = parts[0], parts[1], int(parts[2])
+                action, scroll_id, site, offset = parts[0], parts[1], parts[2], int(parts[3])
                 
                 if site not in state.get('site_results', {}):
                     bot.answer_callback_query(callback['id'], text="❌ Invalid site!", show_alert=True)
@@ -542,23 +618,26 @@ def telegram_webhook():
                     message_id=message_id,
                     text=results_text,
                     parse_mode='HTML',
-                    reply_markup=create_movie_selection_keyboard(site, titles, offset)
+                    reply_markup=create_movie_selection_keyboard(scroll_id, site, titles, offset)
                 )
                 bot.answer_callback_query(callback['id'])
 
             elif callback_data.startswith('select_'):
                 try:
-                    _, site, index = callback_data.split('_')
+                    parts = callback_data.split('_')
+                    if len(parts) != 4:
+                        raise ValueError("Invalid callback data format")
+                    _, scroll_id, site, index = parts
                     index = int(index)
                     
                     if site not in state.get('site_results', {}) or index >= len(state['site_results'][site]['links']):
                         raise ValueError("Invalid selection")
                         
-                except ValueError:
-                    bot.answer_callback_query(callback['id'], text="❌ Invalid selection!", show_alert=True)
+                except ValueError as e:
+                    bot.answer_callback_query(callback['id'], text=f"❌ Invalid selection: {str(e)}!", show_alert=True)
                     return '', 200
 
-                selected_link = state['site_results'][site]['links'][index]
+                selected_url = state['site_results'][site]['links'][index]
                 selected_title = state['site_results'][site]['titles'][index]
                 site_info = SITES.get(site, {'name': site.capitalize(), 'emoji': '🎬'})
 
@@ -574,25 +653,21 @@ def telegram_webhook():
                     parse_mode='HTML'
                 )
 
-                download_links = get_download_links_for_movie(selected_link, site)
+                download_links = get_download_links_for_movie(selected_url, site)
 
                 if download_links:
                     links_text = ""
                     for i, link in enumerate(download_links[:10], 1):
                         parts = link.rsplit(':', 1)
-                        if len(parts) == 2:
-                            title, url = parts
-                            title = title.strip()
-                            url = url.strip()
-                            links_text += f"<b>{i}) {title}:</b>\n<a href='{url}'>{url}</a>\n\n"
-                        else:
-                            links_text += f"<b>{i}) Link {i}:</b>\n<a href='{link}'>{link}</a>\n\n"
+                        title = parts[0].strip() if len(parts) == 2 else f"Link {i}"
+                        url = parts[1].strip() if len(parts) == 2 else link.strip()
+                        links_text += f"<b>{i}) {title}:</b>\n<a href='{url}'>{url}</a>\n\n"
                     
                     final_text = (
                         f"✅ <b>Download Links Ready!</b>\n\n"
                         f"🎬 <b>Movie:</b> {selected_title}\n"
                         f"🌐 <b>Site:</b> {site_info['emoji']} {site_info['name']}\n"
-                        f"📊 <b>Found:</b> {len(download_links)} links\n\n"
+                        f"📋 <b>Found:</b> {len(download_links)} links\n\n"
                         f"📥 <b>Download Links:</b>\n\n{links_text}"
                         f"💡 <i>Click links to open</i>"
                     )
@@ -602,7 +677,7 @@ def telegram_webhook():
                         message_id=message_id,
                         text=final_text,
                         parse_mode='HTML',
-                        reply_markup=create_back_navigation_keyboard(),
+                        reply_markup=create_back_navigation_keyboard(scroll_id),
                         disable_web_page_preview=True
                     )
                 else:
@@ -613,14 +688,17 @@ def telegram_webhook():
                             f"😔 <b>No download links found</b>\n\n"
                             f"🎬 <b>Movie:</b> {selected_title}\n"
                             f"🌐 <b>Site:</b> {site_info['emoji']} {site_info['name']}\n\n"
-                            f"💡 <b>Try another movie or different site</b>"
+                            f"💡 <b>Try:</b>\n"
+                            f"  • Another movie\n"
+                            f"  • A different site\n"
+                            f"  • Check debug logs for details"
                         ),
                         parse_mode='HTML',
-                        reply_markup=create_back_navigation_keyboard()
+                        reply_markup=create_back_navigation_keyboard(scroll_id)
                     )
 
                 bot.answer_callback_query(callback['id'])
-                logger.info(f"User {chat_id} got download links for '{selected_title}'")
+                logger.info(f"User {chat_id} got {len(download_links)} download links for '{selected_title}' on {site}")
 
         return '', 200
 
