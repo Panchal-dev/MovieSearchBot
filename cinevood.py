@@ -86,6 +86,12 @@ def get_latest_movies():
                         all_titles.append(f"{movie_count}. {title} (cinevood)")
                         movie_links.append(link)
 
+            pagination = soup.find('div', class_='pagination')
+            next_page = pagination.find('a', class_='next') if pagination else None
+            if not next_page or page == max_pages:
+                logger.info(f"Stopping at page {page} (max_pages reached or no next page)")
+                break
+
             page += 1
             time.sleep(1)
 
