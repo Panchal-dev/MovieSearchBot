@@ -21,8 +21,8 @@ user_state = {}  # {chat_id: {'step': str, 'movie_name': str, 'current_site': st
 STATE_TIMEOUT = timedelta(minutes=30)
 MAX_MESSAGE_LENGTH = 4000
 MAX_RETRIES = 3
-MAX_RESULTS_PER_SITE = 15
-BUTTON_TEXT_LIMIT = 50
+MAX_RESULTS_PER_SITE = 60
+BUTTON_TEXT_LIMIT = 100
 
 # Site configuration with emojis
 SITES = {
@@ -85,13 +85,13 @@ def create_movie_selection_keyboard(site, titles, offset=0):
         display_title = title[:BUTTON_TEXT_LIMIT] + "..." if len(title) > BUTTON_TEXT_LIMIT else title
         markup.add(InlineKeyboardButton(
             f"🎥 {display_title}", 
-            callback_data=f"select_{i}"
+            callback_data=f"select_{site}_{i}"
         ))
     
     # Navigation buttons
     nav_buttons = []
     if offset > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅ Previous", callback_data=f"prev_{site}_{max(0, offset-MAX_RESULTS_PER_SITE)}"))
+        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"prev_{site}_{max(0, offset-MAX_RESULTS_PER_SITE)}"))
     if end_index < len(titles):
         nav_buttons.append(InlineKeyboardButton("➡️ Next", callback_data=f"next_{site}_{end_index}"))
     
@@ -101,18 +101,18 @@ def create_movie_selection_keyboard(site, titles, offset=0):
     # Control buttons
     markup.row(
         InlineKeyboardButton("🔙 Back to Sites", callback_data="back_to_sites"),
-        InlineKeyboardButton("🔗 New Search", callback_data="new_search")
+        InlineKeyboardButton("🔍 New Search", callback_data="new_search")
     )
     markup.row(InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
     
     return markup
 
-def create_back_navigation():
+def create_back_navigation_keyboard():
     """Create navigation keyboard for going back."""
     markup = InlineKeyboardMarkup(row_width=2)
     markup.row(
-        InlineKeyboardButton("🔙 Back to Sites", callback_data="selected"),
-        InlineKeyboardButton("🔗 New Search", callback_data="New_search")
+        InlineKeyboardButton("🔙 Back to Sites", callback_data="back_to_sites"),
+        InlineKeyboardButton("🔍 New Search", callback_data="new_search")
     )
     markup.row(InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
     return markup
@@ -130,6 +130,7 @@ def search_movies_single_site(movie_name, site):
             return [], []
         
         titles, links = site_functions[site](movie_name)
+        logger.info(f"Fetched {len(titles)} titles from {site}")
         return titles, links
     except Exception as e:
         logger.error(f"Error searching {site}: {e}")
@@ -151,7 +152,7 @@ def get_latest_movies_all_sites():
             try:
                 titles, links = future.result(timeout=20)
                 if titles:
-                    site_results[site] = {'titles': titles, 'links': [(link, site) for link in links]}
+                    site_results[site] = {'titles': titles, 'links': links}
                     logger.info(f"Fetched {len(titles)} latest titles from {site}")
             except Exception as e:
                 logger.error(f"Error fetching latest from {site}: {e}")
@@ -438,15 +439,15 @@ def telegram_webhook():
                 bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text=f"🔍 <b>Searching '{state.get('movie_name', 'Latest Movies')}' on {site_info['emoji']} {site_info['name']}...</b>\n\n⏳ Please wait...",
+                    text=f"🔍 <b>Searching '{state.get('movie_name', 'Latest Movies')}' on {site_info['emoji']} {site_info['name']}...</b>\n\n⏳ <i>Please wait...</i>",
                     parse_mode='HTML'
                 )
 
                 if state['step'] == 'latest_selection':
-                    if 'movie_results' not in state:
-                        state['movie_results'] = get_latest_movies_all()
-                    titles = state['movie_results'].get(site, {}).get('titles', [])
-                    links = state['movie_results'].get(site, {}).get('links', [])
+                    if 'site_results' not in state:
+                        state['site_results'] = get_latest_movies_all_sites()
+                    titles = state['site_results'].get(site, {}).get('titles', [])
+                    links = state['site_results'].get(site, {}).get('links', [])
                 else:
                     if 'movie_name' not in state:
                         bot.answer_callback_query(callback['id'], text="❌ No movie name found!", show_alert=True)
@@ -458,7 +459,7 @@ def telegram_webhook():
                         chat_id=chat_id,
                         message_id=message_id,
                         text=(
-                            f"😔 No movies found for '{state.get('movie_name', 'Latest Movies')}'</b>\n\n"
+                            f"😔 <b>No results found for '{state.get('movie_name', 'Latest Movies')}'</b>\n\n"
                             f"🎬 Site: {site_info['emoji']} {site_info['name']}\n\n"
                             f"💡 <b>Try:</b>\n"
                             f"• Different spelling\n"
@@ -466,7 +467,7 @@ def telegram_webhook():
                             f"• Different search terms"
                         ),
                         parse_mode='HTML',
-                        reply_markup=create_back_navigation()
+                        reply_markup=create_back_navigation_keyboard()
                     )
                     bot.answer_callback_query(callback['id'])
                     return '', 200
@@ -523,10 +524,12 @@ def telegram_webhook():
 
             elif callback_data.startswith('select_'):
                 try:
-                    index = int(callback_data.replace('select_', ''))
-                    site = state['current_site']
+                    _, site, index = callback_data.split('_')
+                    index = int(index)
+                    
                     if site not in state.get('site_results', {}) or index >= len(state['site_results'][site]['links']):
                         raise ValueError("Invalid selection")
+                        
                 except ValueError:
                     bot.answer_callback_query(callback['id'], text="❌ Invalid selection!", show_alert=True)
                     return '', 200
@@ -572,7 +575,7 @@ def telegram_webhook():
                         message_id=message_id,
                         text=final_text,
                         parse_mode='HTML',
-                        reply_markup=create_back_navigation(),
+                        reply_markup=create_back_navigation_keyboard(),
                         disable_web_page_preview=True
                     )
                 else:
@@ -586,7 +589,7 @@ def telegram_webhook():
                             f"💡 <b>Try another movie or different site</b>"
                         ),
                         parse_mode='HTML',
-                        reply_markup=create_back_navigation()
+                        reply_markup=create_back_navigation_keyboard()
                     )
 
                 bot.answer_callback_query(callback['id'])
@@ -623,7 +626,7 @@ def set_webhook():
     if not railway_domain:
         logger.error("RAILWAY_PUBLIC_DOMAIN not set")
         raise ValueError("RAILWAY_PUBLIC_DOMAIN environment variable not set")
-    webhook_url = f"https=https://{railway_domain}/telegram"
+    webhook_url = f"https://{railway_domain}/telegram"
     for attempt in range(MAX_RETRIES):
         try:
             bot.set_webhook(url=webhook_url)
