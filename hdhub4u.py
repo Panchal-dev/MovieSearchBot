@@ -100,7 +100,7 @@ def get_latest_movies():
             pagination = soup.find('div', class_='pagination')
             next_page = pagination.find('a', class_='next') if pagination else None
             if not next_page or page == max_pages:
-                logger.info(f"Stopping at page {page} (max_pages reached or no next page)")
+                logger.info("Stopping at page {page} (max_pages reached or no next page)")
                 break
 
             page += 1
@@ -114,6 +114,7 @@ def get_latest_movies():
     return all_titles, movie_links
 
 def get_download_links(movie_url):
+    """Fetch download links from HDHub4U movie page."""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -128,11 +129,12 @@ def get_download_links(movie_url):
         soup = BeautifulSoup(response.text, 'html.parser')
         download_links = []
 
-        download_sections = soup.select('div.entry-content a[href]')
+        # Target all <a> tags within download content
+        download_sections = soup.select('div.entry-content a[href], div.download-links a[href], p a[href]')
         for link_tag in download_sections:
             link_text = link_tag.text.strip()
             link_url = link_tag['href']
-            if link_text and not any(exclude in link_text.lower() for exclude in ['watch online', 'trailer']):
+            if link_text and link_url and not any(exclude in link_text.lower() for exclude in ['watch online', 'trailer', 'telegram']):
                 download_links.append(f"{link_text}: {link_url}")
 
         logger.info(f"Fetched {len(download_links)} download links from hdhub4u")

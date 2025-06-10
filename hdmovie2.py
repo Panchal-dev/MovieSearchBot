@@ -4,6 +4,7 @@ import time
 from config import SITE_CONFIG, logger
 
 def get_movie_titles_and_links(movie_name):
+    """Search for movies on HDMovie2 (single page, no pagination)."""
     search_query = f"{movie_name.replace(' ', '+').lower()}"
     base_url = f"https://{SITE_CONFIG['hdmovie2']}/?s={search_query}"
     headers = {
@@ -21,7 +22,8 @@ def get_movie_titles_and_links(movie_name):
         response = session.get(base_url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        movie_elements = soup.select('article.item.movies')
+        # Target both featured and normal movie items
+        movie_elements = soup.select('div.items.featured article.item.movies, div.items.normal article.item.movies')
 
         if not movie_elements:
             logger.info("No movie elements found on hdmovie2 search")
@@ -46,11 +48,11 @@ def get_movie_titles_and_links(movie_name):
         return [], []
 
 def get_latest_movies():
-    """Fetch latest movies from hdmovie2's main page (single page)."""
+    """Fetch latest movies from HDMovie2's main page (single page, no pagination)."""
     base_url = f"https://{SITE_CONFIG['hdmovie2']}/"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,xml/html',
         'Accept-Language': 'en-US,en;q=0.5',
         'Connection': 'keep-alive'
     }
@@ -63,7 +65,8 @@ def get_latest_movies():
         response = session.get(base_url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        movie_elements = soup.select('article.item.movies')
+        # Target both featured and normal movie items
+        movie_elements = soup.select('div.items.featured article.item.movies, div.items.normal article.item.movies')
 
         if not movie_elements:
             logger.info("No movie elements found on hdmovie2 main page")
@@ -88,6 +91,7 @@ def get_latest_movies():
         return [], []
 
 def get_download_links(movie_url):
+    """Fetch download links from HDMovie2 movie page."""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -102,11 +106,12 @@ def get_download_links(movie_url):
         soup = BeautifulSoup(response.text, 'html.parser')
         download_links = []
 
-        download_sections = soup.select('div#links a[href]')
+        # Target all <a> tags within download sections
+        download_sections = soup.select('div#links a[href], div.download-links a[href], p a[href]')
         for link_tag in download_sections:
             link_text = link_tag.text.strip()
             link_url = link_tag['href']
-            if link_text and not any(exclude in link_text.lower() for exclude in ['watch online', 'trailer']):
+            if link_text and link_url and not any(exclude in link_text.lower() for exclude in ['watch online', 'trailer', 'telegram']):
                 download_links.append(f"{link_text}: {link_url}")
 
         logger.info(f"Fetched {len(download_links)} download links from hdmovie2")

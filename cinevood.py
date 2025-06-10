@@ -4,7 +4,8 @@ import time
 from config import SITE_CONFIG, logger
 
 def get_movie_titles_and_links(movie_name):
-    search_query = f"{movie_name.replace(' ', '+').lower()}"
+    """Search movies on CineVood (up to 10 pages)."""
+    search_query = f"{movie_name.replace(' ', '-')}".lower()
     base_url = f"https://{SITE_CONFIG['cinevood']}/?s={search_query}"
     scraper = cloudscraper.create_scraper()
     page = 1
@@ -53,7 +54,7 @@ def get_movie_titles_and_links(movie_name):
     return all_titles, movie_links
 
 def get_latest_movies():
-    """Fetch latest movies from cinevood's main pages (up to 10 pages)."""
+    """Fetch latest movies from CineVood's main pages (up to 10 pages)."""
     base_url = f"https://{SITE_CONFIG['cinevood']}/"
     scraper = cloudscraper.create_scraper()
     page = 1
@@ -106,41 +107,62 @@ def get_latest_movies():
     return all_titles, movie_links
 
 def get_download_links(movie_url):
+    """Fetch download links from CineVood movie page."""
     scraper = cloudscraper.create_scraper()
+    download_links = []  # Initialize the list
+    
     try:
         logger.debug(f"Fetching cinevood movie page: {movie_url}")
         response = scraper.get(movie_url, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        download_links = []
 
-        download_sections = soup.select('div.download-btns')
-        for section in download_sections:
-            description_tag = section.find('h6')
-            link_tags = section.select('div.cat-btn-div2 a[href]')
-            if description_tag and link_tags:
-                description = description_tag.text.strip()
-                if any(exclude in description.lower() for exclude in ['watch online', 'trailer']):
-                    continue
-                for link_tag in link_tags:
-                    link_text = link_tag.find('button').text.strip()
-                    link_url = link_tag['href']
-                    download_links.append(f"{description} [{link_text}]: {link_url}")
+        # Try multiple selectors for download links
+        selectors = [
+            'div.download-btns a[href]',  # Primary download buttons
+            'div.entry-content a[href]',   # Links in content
+            'p a[href]',                   # Links in paragraphs
+            'div.cat-btn-div2 a[href]'     # Alternative button divs
+        ]
 
-        if not download_links:
-            h6_tags = soup.select('h6')
-            for h6 in h6_tags:
-                description = h6.text.strip()
-                if any(exclude in description.lower() for exclude in ['watch online', 'trailer']):
-                    continue
-                next_a = h6.find_next('a', class_='maxbutton')
-                if next_a and 'href' in next_a.attrs:
-                    link_url = next_a['href']
-                    link_text = next_a.find('span', class_='mb-text').text.strip() if next_a.find('span', class_='mb-text') else 'Download'
-                    download_links.append(f"{description} [{link_text}]: {link_url}")
+        for selector in selectors:
+            link_tags = soup.select(selector)
+            for link_tag in link_tags:
+                link_text = link_tag.text.strip()
+                link_url = link_tag['href']
+                if link_text and link_url and not any(exclude in link_text.lower() for exclude in ['watch online', 'trailer', 'telegram']):
+                    # Try to find associated description
+                    description = ""
+                    parent_h6 = link_tag.find_previous('h6')
+                    if parent_h6:
+                        description = parent_h6.text.strip()
+                    elif link_tag.find_parent('div', class_='download-btns'):
+                        description_tag = link_tag.find_parent('div').find('h6')
+                        description = description_tag.text.strip() if description_tag else link_text
+                    else:
+                        description = f"{description} [{link_text}]" if description else link_text
+                    download_links.append(f"{description}: {link_url}")
 
-        logger.info(f"Fetched {len(download_links)} download links from cinevood")
-        return download_links
+        # Also check for maxbutton links
+        max_buttons = soup.select('a.maxbutton')
+        for button in max_buttons:
+            link_text = button.find('span', class_='mb-text').text.strip() if button.find('span', class_='mb-text') else 'Download'
+            link_url = button['href']
+            description_parent = button.find_previous('h6')
+            description = description_parent.text.strip() if description_parent else link_text
+            if not any(exclude in description.lower() or exclude in link_text.lower() for exclude in ['watch online', 'trailer', 'telegram']):
+                download_links.append(f"{description} [{link_text}]: {link_url}")
+
+        # Remove duplicates while preserving order
+        unique_links = []
+        seen = set()
+        for link in download_links:
+            if link not in seen:
+                seen.add(link)
+                unique_links.append(link)
+
+        logger.info(f"Fetched {len(unique_links)} download links from cinevood")
+        return unique_links
 
     except Exception as e:
         logger.error(f"Error fetching cinevood download links: {e}")
