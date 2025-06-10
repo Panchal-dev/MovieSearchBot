@@ -12,45 +12,36 @@ def get_movie_titles_and_links(movie_name):
     all_titles = []
     movie_links = []
 
-    while True:
-        url = base_url if page == 1 else f"https://{SITE_CONFIG['hdmovie2']}/page/{page}/?s={search_query}"
-        logger.debug(f"Fetching hdmovie2 page {page}: {url}")
-        try:
-            response = scraper.get(url, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-            movie_elements = soup.select('div.result-item')
+    url = base_url
+    logger.debug(f"Fetching hdmovie2 page: {url}")
+    try:
+        response = scraper.get(url, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        movie_elements = soup.select('div.result-item')
 
-            if not movie_elements:
-                logger.info(f"No movie elements found on hdmovie2 page {page}")
-                break
+        if not movie_elements:
+            logger.info(f"No movie elements found on hdmovie2 page")
+            return [], []
 
-            for element in movie_elements:
-                title_tag = element.select_one('div.details div.title a')
-                if title_tag:
-                    title = title_tag.text.strip()
-                    link = title_tag['href']
-                    if title and not any(exclude in title.lower() for exclude in ['©', 'all rights reserved']):
-                        movie_count += 1
-                        all_titles.append(f"{movie_count}. {title} (hdmovie2)")
-                        movie_links.append(link)
+        for element in movie_elements:
+            title_tag = element.select_one('div.details div.title a')
+            if title_tag:
+                title = title_tag.text.strip()
+                link = title_tag['href']
+                if title and not any(exclude in title.lower() for exclude in ['©', 'all rights reserved']):
+                    movie_count += 1
+                    all_titles.append(f"{movie_count}. {title} (hdmovie2)")
+                    movie_links.append(link)
 
-            pagination = soup.find('div', class_='pagination')
-            next_page = pagination.find('a', class_='inactive') if pagination else None
-            if not next_page:
-                break
+        return all_titles, movie_links
 
-            page += 1
-            time.sleep(1)
-
-        except Exception as e:
-            logger.error(f"Error fetching hdmovie2 page {page}: {e}")
-            break
-
-    return all_titles, movie_links
+    except Exception as e:
+        logger.error(f"Error fetching hdmovie2 page: {e}")
+        return [], []
 
 def get_latest_movies():
-    """Scrape the latest movies from hdmovie2's main page (no pagination)."""
+    """Scrape the latest movies from hdmovie2's main page (single page)."""
     base_url = f"https://{SITE_CONFIG['hdmovie2']}/"
     scraper = cloudscraper.create_scraper()
     movie_count = 0
@@ -93,11 +84,11 @@ def get_download_links(movie_url):
         response = scraper.get(movie_url, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        download_link_tags = soup.select('div.wp-content p a[href*="dwo.hair"]')
+        download_link_tags = soup.select('div a[href*="dwo"]')
 
         if not download_link_tags:
             logger.info(f"No download page link found on {movie_url}")
-            return []
+            return [], 200
 
         download_page_url = download_link_tags[0]['href']
         logger.debug(f"Fetching hdmovie2 download page: {download_page_url}")
@@ -116,4 +107,4 @@ def get_download_links(movie_url):
 
     except Exception as e:
         logger.error(f"Error fetching hdmovie2 download links: {e}")
-        return []
+        return [], []
