@@ -41,18 +41,30 @@ def cleanup_expired_states():
             logger.info(f"Cleaned up expired state for chat_id {chat_id}")
         time.sleep(600)
 
-def send_long_message(chat_id, text, reply_to_message_id=None, reply_markup=None):
+def send_long_message(chat_id, text, reply_to_message_id=None, reply_markup=None, parse_mode=None):
     """Send long messages by splitting if necessary."""
     try:
         if len(text) <= MAX_MESSAGE_LENGTH:
-            return bot.send_message(chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id, parse_mode='HTML', reply_markup=reply_markup)
+            return bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_to_message_id=reply_to_message_id,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
         parts = []
         while text:
             parts.append(text[:MAX_MESSAGE_LENGTH])
             text = text[MAX_MESSAGE_LENGTH:]
+        last_message = None
         for i, part in enumerate(parts):
-            bot.send_message(chat_id=chat_id, text=part, parse_mode='HTML', reply_markup=reply_markup if i == len(parts) - 1 else None)
-        return parts[-1]
+            last_message = bot.send_message(
+                chat_id=chat_id,
+                text=part,
+                reply_markup=reply_markup if i == len(parts) - 1 else None,
+                parse_mode=parse_mode
+            )
+        return last_message
     except Exception as e:
         logger.error(f"Error sending message to chat_id {chat_id}: {e}")
         return None
@@ -100,7 +112,7 @@ def create_movie_selection_keyboard(site, titles, offset=0):
     
     # Control buttons
     markup.row(
-        InlineKeyboardButton("🔙 Back to Sites", callback_data="back_to_sites"),
+        InlineKeyboardButton("🔙 Rollback to Sites", callback_data="back_to_sites"),
         InlineKeyboardButton("🔍 New Search", callback_data="new_search")
     )
     markup.row(InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
@@ -111,7 +123,7 @@ def create_back_navigation_keyboard():
     """Create navigation keyboard for going back."""
     markup = InlineKeyboardMarkup(row_width=2)
     markup.row(
-        InlineKeyboardButton("🔙 Back to Sites", callback_data="back_to_sites"),
+        InlineKeyboardButton("🔙 Rollback to Sites", callback_data="back_to_sites"),
         InlineKeyboardButton("🔍 New Search", callback_data="new_search")
     )
     markup.row(InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
@@ -152,7 +164,7 @@ def get_latest_movies_all_sites():
             try:
                 titles, links = future.result(timeout=20)
                 if titles:
-                    site_results[site] = {'titles': titles, 'links': [(link, site) for link in links]}
+                    site_results[site] = {'titles': titles, 'links': links}  # Store links directly
                     logger.info(f"Fetched {len(titles)} latest titles from {site}")
             except Exception as e:
                 logger.error(f"Error fetching latest from {site}: {e}")
@@ -194,7 +206,7 @@ def telegram_webhook():
             text = message.get('text', '').strip()
 
             if chat_id not in ALLOWED_IDS:
-                send_long_message(chat_id, "🚫 <b>Access Denied</b>\n\n❌ This bot is restricted to authorized users only.", reply_to_message_id=message_id)
+                send_long_message(chat_id, "🚫 <b>Access Denied</b>\n\n❌ This bot is restricted to authorized users only.", reply_to_message_id=message_id, parse_mode='HTML')
                 logger.info(f"Unauthorized access by chat_id {chat_id}")
                 return '', 200
 
@@ -205,17 +217,6 @@ def telegram_webhook():
             # Handle commands
             if text.lower() == '/start':
                 user_state[chat_id] = {'step': 'awaiting_movie_name', 'last_active': datetime.now()}
-                latest_movies = get_latest_movies_all_sites()
-                latest_text = ""
-                if latest_movies:
-                    latest_text = "🔥 <b>Latest Releases:</b>\n\n"
-                    for site, data in latest_movies.items():
-                        site_info = SITES.get(site, {'name': site.capitalize(), 'emoji': '🎬'})
-                        latest_text += f"{site_info['emoji']} <b>{site_info['name']}:</b>\n"
-                        for i, title in enumerate(data['titles'][:5], 1):
-                            latest_text += f"• {title}\n"
-                        latest_text += "\n"
-                
                 welcome_text = (
                     "🎬 <b>Welcome to Advanced Movie Search Bot!</b>\n\n"
                     "✨ <b>How it works:</b>\n"
@@ -223,39 +224,40 @@ def telegram_webhook():
                     "2️⃣ Choose your preferred site\n"
                     "3️⃣ Select movie from results\n"
                     "4️⃣ Get download links instantly!\n\n"
-                    f"{latest_text}"
                     "🔍 <b>Enter a movie name to get started:</b>\n"
                     "💡 <i>Example: Avengers Endgame 2019</i>\n\n"
                     "📌 <b>Or use /latest to browse recent releases</b>"
                 )
-                send_long_message(chat_id, welcome_text, reply_to_message_id=message_id)
+                send_long_message(chat_id, welcome_text, reply_to_message_id=message_id, parse_mode='HTML')
                 logger.info(f"User {chat_id} started bot")
 
             elif text.lower() == '/latest':
                 user_state[chat_id] = {'step': 'latest_selection', 'last_active': datetime.now()}
-                bot.send_message(
+                loading_message = send_long_message(
                     chat_id=chat_id,
                     text="🔍 <b>Fetching latest movies from all sites...</b>\n\n⏳ <i>Please wait...</i>",
-                    parse_mode='HTML',
-                    reply_to_message_id=message_id
+                    reply_to_message_id=message_id,
+                    parse_mode='HTML'
                 )
+                
                 site_results = get_latest_movies_all_sites()
                 user_state[chat_id]['site_results'] = site_results
 
                 if not site_results:
-                    send_long_message(
+                    bot.edit_message_text(
                         chat_id=chat_id,
+                        message_id=loading_message.message_id,
                         text="😔 <b>No latest movies found</b>\n\n🔄 Try again later or search specific movies with /start.",
-                        reply_to_message_id=message_id,
+                        parse_mode='HTML',
                         reply_markup=create_back_navigation_keyboard()
                     )
                     logger.info(f"User {chat_id} requested /latest but no results found")
                     return '', 200
 
-                send_long_message(
+                bot.edit_message_text(
                     chat_id=chat_id,
+                    message_id=loading_message.message_id,
                     text="🔥 <b>Latest Movies</b>\n\n🎬 <b>Choose a site to view latest releases:</b>",
-                    reply_to_message_id=message_id,
                     parse_mode='HTML',
                     reply_markup=create_site_selection_keyboard(show_latest=False)
                 )
@@ -285,16 +287,16 @@ def telegram_webhook():
                     "• Use inline buttons to navigate\n"
                     "• Links are clickable to open directly"
                 )
-                send_long_message(chat_id, commands_text, reply_to_message_id=message_id)
+                send_long_message(chat_id, commands_text, reply_to_message_id=message_id, parse_mode='HTML')
                 logger.info(f"User {chat_id} requested command list")
 
             elif text.lower() == '/cancel':
                 if chat_id in user_state:
                     del user_state[chat_id]
-                    send_long_message(chat_id, "✅ <b>Operation Cancelled</b>\n\n🔄 Start over with /start or browse with /latest", reply_to_message_id=message_id)
+                    send_long_message(chat_id, "✅ <b>Operation Cancelled</b>\n\n🔄 Start over with /start or browse with /latest", reply_to_message_id=message_id, parse_mode='HTML')
                     logger.info(f"User {chat_id} cancelled operation")
                 else:
-                    send_long_message(chat_id, "ℹ️ <b>No Active Operation</b>\n\n🚀 Start with /start or browse with /latest", reply_to_message_id=message_id)
+                    send_long_message(chat_id, "ℹ️ <b>No Active Operation</b>\n\n🚀 Start with /start or browse with /latest", reply_to_message_id=message_id, parse_mode='HTML')
 
             elif text.lower() == '/update_domain':
                 user_state[chat_id] = {'step': 'awaiting_site_selection_domain', 'last_active': datetime.now()}
@@ -304,7 +306,8 @@ def telegram_webhook():
                     f"🌐 <b>Current Site Domains:</b>\n{sites}\n\n"
                     f"📝 Reply with the number (1-{len(SITE_CONFIG)}) to select a site to update its domain.\n"
                     f"💡 <i>Example: Reply '2' to update hdhub4u</i>",
-                    reply_to_message_id=message_id
+                    reply_to_message_id=message_id,
+                    parse_mode='HTML'
                 )
                 logger.info(f"User {chat_id} initiated domain update")
 
@@ -313,7 +316,7 @@ def telegram_webhook():
 
                 if state['step'] == 'awaiting_movie_name':
                     if not text:
-                        send_long_message(chat_id, "❌ <b>Please enter a movie name</b>\n\n💡 <i>Example: Avatar 2022</i>", reply_to_message_id=message_id)
+                        send_long_message(chat_id, "❌ <b>Please enter a movie name</b>\n\n💡 <i>Example: Avatar 2022</i>", reply_to_message_id=message_id, parse_mode='HTML')
                         return '', 200
                     
                     user_state[chat_id].update({
@@ -333,14 +336,15 @@ def telegram_webhook():
                         chat_id, 
                         site_selection_text,
                         reply_to_message_id=message_id,
-                        reply_markup=create_site_selection_keyboard()
+                        reply_markup=create_site_selection_keyboard(),
+                        parse_mode='HTML'
                     )
                     logger.info(f"User {chat_id} entered movie name: {text}")
 
                 elif state['step'] == 'awaiting_site_selection_domain':
                     if text.lower() == 'cancel':
                         del user_state[chat_id]
-                        send_long_message(chat_id, "✅ <b>Cancelled</b>\n\n🔄 Start over with /start or browse with /latest", reply_to_message_id=message_id)
+                        send_long_message(chat_id, "✅ <b>Cancelled</b>\n\n🔄 Start over with /start or browse with /latest", reply_to_message_id=message_id, parse_mode='HTML')
                         return '', 200
 
                     try:
@@ -354,20 +358,22 @@ def telegram_webhook():
                             f"🌐 <b>Enter new domain for {site_keys[index]}</b>\n\n"
                             f"📍 Current: <code>{SITE_CONFIG[site_keys[index]]}</code>\n"
                             f"💡 <i>Example: {site_keys[index]}.new-domain.com</i>",
-                            reply_to_message_id=message_id
+                            reply_to_message_id=message_id,
+                            parse_mode='HTML'
                         )
                         logger.info(f"User {chat_id} selected site {site_keys[index]} for domain update")
                     except ValueError:
                         send_long_message(
                             chat_id,
                             f"❌ <b>Invalid Input</b>\n\n📝 Please enter a number between 1 and {len(SITE_CONFIG)}, or 'cancel'.",
-                            reply_to_message_id=message_id
+                            reply_to_message_id=message_id,
+                            parse_mode='HTML'
                         )
 
                 elif state['step'] == 'awaiting_new_domain':
                     if text.lower() == 'cancel':
                         del user_state[chat_id]
-                        send_long_message(chat_id, "✅ <b>Cancelled</b>\n\n🔄 Start over with /start or browse with /latest", reply_to_message_id=message_id)
+                        send_long_message(chat_id, "✅ <b>Cancelled</b>\n\n🔄 Start over with /start or browse with /latest", reply_to_message_id=message_id, parse_mode='HTML')
                         return '', 200
 
                     new_domain = text.strip()
@@ -381,7 +387,8 @@ def telegram_webhook():
                             f"🎯 {site_key} → <code>{new_domain}</code>\n\n"
                             f"🌐 <b>Current Domains:</b>\n{sites}\n\n"
                             f"🚀 Start a new search with /start or browse with /latest",
-                            reply_to_message_id=message_id
+                            reply_to_message_id=message_id,
+                            parse_mode='HTML'
                         )
                         logger.info(f"User {chat_id} updated {site_key} to {new_domain}")
                     else:
@@ -392,7 +399,8 @@ def telegram_webhook():
                             f"🚫 Invalid format for '{site_key}'\n"
                             f"💡 Domain must start with '{site_key}'\n\n"
                             f"🔄 Start over with /start or browse with /latest",
-                            reply_to_message_id=message_id
+                            reply_to_message_id=message_id,
+                            parse_mode='HTML'
                         )
 
         elif 'callback_query' in update:
@@ -437,7 +445,7 @@ def telegram_webhook():
             elif callback_data == 'back_to_sites':
                 user_state[chat_id]['step'] = 'site_selection'
                 site_selection_text = (
-                    f"🎯 <b>Searching for: '{state.get('movie_name', 'Latest Movies')}'</b>\n\n"
+                    f"🎯 <b>Showing: '{state.get('movie_name', 'Latest Movies')}'</b>\n\n"
                     f"🎬 <b>Choose your preferred site:</b>\n\n"
                     f"📍 <i>Each site may have different quality options</i>"
                 )
@@ -465,7 +473,7 @@ def telegram_webhook():
 
                 if state['step'] == 'latest_selection':
                     titles = state['site_results'].get(site, {}).get('titles', [])
-                    links = [link for link, _ in state['site_results'].get(site, {}).get('links', [])]
+                    links = state['site_results'].get(site, {}).get('links', [])
                 else:
                     if 'movie_name' not in state:
                         bot.answer_callback_query(callback['id'], text="❌ No movie name found!", show_alert=True)
@@ -494,7 +502,7 @@ def telegram_webhook():
                 user_state[chat_id].update({
                     'step': 'movie_selection',
                     'current_site': site,
-                    'site_results': {site: {'titles': titles, 'links': [(link, site) for link in links]}}
+                    'site_results': {site: {'titles': titles, 'links': links}}
                 })
 
                 results_text = (
@@ -552,7 +560,7 @@ def telegram_webhook():
                     bot.answer_callback_query(callback['id'], text="❌ Invalid selection!", show_alert=True)
                     return '', 200
 
-                selected_link, selected_site = state['site_results'][site]['links'][index]
+                selected_link = state['site_results'][site]['links'][index]
                 selected_title = state['site_results'][site]['titles'][index]
                 site_info = SITES.get(site, {'name': site.capitalize(), 'emoji': '🎬'})
 
@@ -570,7 +578,7 @@ def telegram_webhook():
                 )
 
                 # Get download links
-                download_links = get_download_links_for_movie(selected_link, selected_site)
+                download_links = get_download_links_for_movie(selected_link, site)
 
                 if download_links:
                     links_text = ""
@@ -648,7 +656,7 @@ def telegram_webhook():
     except Exception as e:
         logger.error(f"Webhook error: {e}", exc_info=True)
         if 'chat_id' in locals() and 'message_id' in locals():
-            send_long_message(chat_id, f"❌ <b>Unexpected Error</b>\n\n🐛 {str(e)}\n\n🔄 Try again with /start or browse with /latest", reply_to_message_id=message_id)
+            send_long_message(chat_id, f"❌ <b>Unexpected Error</b>\n\n🐛 {str(e)}\n\n🔄 Try again with /start or browse with /latest", reply_to_message_id=message_id, parse_mode='HTML')
         return '', 200
 
 @app.route('/health', methods=['GET'])
